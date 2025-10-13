@@ -1,105 +1,76 @@
 #include <NimBLEDevice.h>
 
-// Nordic UART Service (NUS) UUIDs
-static const char* SVC_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-static const char* RX_UUID  = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; // phone -> ESP (Write/WriteNR)
-static const char* TX_UUID  = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"; // ESP -> phone (Notify)
+// NUS UUIDs (case-insensitive)
+static const char* SVC_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+static const char* RX_UUID  = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Write / WriteNR
+static const char* TX_UUID  = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Notify
 
-NimBLECharacteristic* txChar;
-volatile bool deviceConnected = false;
+static NimBLECharacteristic* txChar = nullptr;
+static volatile bool deviceConnected = false;
 
-// ---- Server callbacks (support old and new NimBLE signatures) ----
-class ServerCallbacks : public NimBLEServerCallbacks {
-public:
-  // Newer NimBLE
-  void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) {
+class ServerCB : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override {
     deviceConnected = true;
-    // Request a power-friendly interval (36–72 * 1.25ms = 45–90ms)
-    s->updateConnParams(connInfo.getConnHandle(), 36, 72, 4, 600);
-    Serial.println("Central connected (new sig)");
+    Serial.println("[ESP] Central connected");
   }
-  void onDisconnect(NimBLEServer* s, NimBLEConnInfo& /*connInfo*/) {
+  void onDisconnect(NimBLEServer* s, NimBLEConnInfo& info, int reason) override {
     deviceConnected = false;
-    Serial.println("Central disconnected (new sig)");
-    NimBLEDevice::startAdvertising();
-  }
-  // Older NimBLE (kept for compatibility)
-  void onConnect(NimBLEServer* s) {
-    deviceConnected = true;
-    Serial.println("Central connected (old sig)");
-  }
-  void onDisconnect(NimBLEServer* s) {
-    deviceConnected = false;
-    Serial.println("Central disconnected (old sig)");
+    Serial.printf("[ESP] Central disconnected (reason=%d). Restarting adv…\n", reason);
     NimBLEDevice::startAdvertising();
   }
 };
 
-// ---- Characteristic callbacks (support old and new signatures) ----
-class RxCallbacks : public NimBLECharacteristicCallbacks {
-public:
-  // Newer NimBLE
-  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& /*connInfo*/) {
-    handleWrite(c);
-  }
-  // Older NimBLE
-  void onWrite(NimBLECharacteristic* c) {
-    handleWrite(c);
-  }
-private:
-  void handleWrite(NimBLECharacteristic* c) {
-    std::string data = c->getValue();
-    if (data.empty()) return;
-    Serial.print("RX <- ");
-    Serial.println(data.c_str());
-    // Echo back to phone (optional)
-    txChar->setValue((uint8_t*)data.data(), data.size());
+class RxCB : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo& info) override {
+    std::string d = c->getValue();
+    if (d.empty()) return;
+    Serial.print("[ESP] RX <- ");
+    Serial.write((const uint8_t*)d.data(), d.size());
+    Serial.println();
+    // echo back
+    txChar->setValue((const uint8_t*)d.data(), d.size());
     txChar->notify();
   }
 };
 
 void setup() {
   Serial.begin(115200);
-  delay(200);
+  delay(300);
+  Serial.println("\n[ESP] Booting…");
 
   NimBLEDevice::init("Jeni-ESP32");
-  // Lower TX power for 2–5 m & power saving (tweak as needed)
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);
+  NimBLEDevice::setSecurityAuth(false, false, false);
+  NimBLEDevice::setMTU(185); // optional
 
-  NimBLEServer* server = NimBLEDevice::createServer();
-  server->setCallbacks(new ServerCallbacks());
+  auto server = NimBLEDevice::createServer();
+  server->setCallbacks(new ServerCB());
 
-  NimBLEService* svc = server->createService(SVC_UUID);
+  auto svc = server->createService(SVC_UUID);
 
   txChar = svc->createCharacteristic(TX_UUID, NIMBLE_PROPERTY::NOTIFY);
 
-  NimBLECharacteristic* rxChar = svc->createCharacteristic(
-      RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  rxChar->setCallbacks(new RxCallbacks());
+  auto rx = svc->createCharacteristic(RX_UUID,
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  rx->setCallbacks(new RxCB());
 
   svc->start();
 
-  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(SVC_UUID);
-  // Some NimBLE versions don’t have setScanResponse(true); safe to omit.
-  // If you want scan response data, use adv->setScanResponseData(...).
+  // Build proper advertising & scan response payloads
+  auto adv = NimBLEDevice::getAdvertising();
+  NimBLEAdvertisementData advData, scanData;
+  advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+  advData.setName("Jeni-ESP32");
+  advData.addServiceUUID(NimBLEUUID(SVC_UUID));
+  scanData.setName("Jeni-ESP32");
+  scanData.addServiceUUID(NimBLEUUID(SVC_UUID));
+
+  adv->setAdvertisementData(advData);
+  adv->setScanResponseData(scanData);
   adv->start();
 
-  Serial.println("BLE up. Advertising as Jeni-ESP32");
+  Serial.println("[ESP] Advertising NUS as 'Jeni-ESP32'…");
 }
 
 void loop() {
-  static uint32_t last = 0;
-  static uint32_t count = 0;
-
-  if (deviceConnected && millis() - last >= 1000) {
-    last = millis();
-    char msg[64];
-    snprintf(msg, sizeof(msg), "count=%lu, ms=%lu\n",
-             (unsigned long)count++, (unsigned long)millis());
-    txChar->setValue((uint8_t*)msg, strlen(msg));
-    txChar->notify();
-    delay(5);
-  }
-  delay(10);
+  delay(50);
 }
