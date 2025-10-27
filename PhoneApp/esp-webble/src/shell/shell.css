@@ -1,0 +1,126 @@
+.sh-app {
+    display: grid;
+    grid-template-columns: 240px 1fr 320px;
+    grid-template-rows: 64px 1fr 56px;
+    grid-template-areas: "top top top" "nav main rail" "dock dock dock";
+    min-height: 100vh;
+}
+
+.sh-topbar {
+    grid-area: top;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    background: var(--card);
+    box-shadow: var(--shadow-1);
+    z-index: 40
+}
+
+.brand {
+    font-weight: 800
+}
+
+.top-search {
+    flex: 1;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #fafbff
+}
+
+.top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+.avatar {
+    padding: 8px 12px;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    background: #fff
+}
+
+.sh-sidenav {
+    grid-area: nav;
+    padding: 12px;
+    background: #ffffffb3;
+    backdrop-filter: blur(6px);
+    border-right: 1px solid #eef2f7
+}
+
+.sh-sidenav a {
+    display: block;
+    padding: 10px 12px;
+    border-radius: 12px;
+    color: #0f172a;
+    margin: 2px 0
+}
+
+.sh-sidenav a.active {
+    background: #eef2ff;
+    color: #1e40af
+}
+
+.sh-rail {
+    grid-area: rail;
+    padding: 12px
+}
+
+.sh-main {
+    grid-area: main;
+    padding: 20px;
+    display: grid;
+    gap: 16px
+}
+
+.sh-dock {
+    grid-area: dock;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--card);
+    border-top: 1px solid #e5e7eb;
+    z-index: 45
+}
+
+.dock-left,
+.dock-right {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+.dock-center .dock-timer {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums
+}
+
+@media (max-width:1023px) {
+    .sh-app {
+        grid-template-columns: 72px 1fr 0;
+        grid-template-areas: "top top top" "nav main main" "dock dock dock"
+    }
+
+    .sh-rail {
+        display: none
+    }
+
+    .sh-sidenav a {
+        text-align: center
+    }
+}
+
+@media (max-width:767px) {
+    .sh-app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 56px 1fr 56px;
+        grid-template-areas: "top" "main" "dock"
+    }
+
+    .sh-sidenav {
+        display: none
+    }
+}
