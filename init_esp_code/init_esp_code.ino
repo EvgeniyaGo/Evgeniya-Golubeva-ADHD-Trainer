@@ -1,3 +1,4 @@
+#if 0
 #include <NimBLEDevice.h>
 
 // NUS UUIDs (case-insensitive)
@@ -74,3 +75,5 @@ void setup() {
 void loop() {
   delay(50);
 }
+#endif
+
