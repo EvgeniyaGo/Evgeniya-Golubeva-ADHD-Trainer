@@ -1,3 +1,4 @@
+#if 0
 #include <Adafruit_NeoPixel.h>   // Install "Adafruit NeoPixel" via Library Manager
 
 // -------- Pins & panel geometry --------
@@ -61,3 +62,4 @@ void loop() {
 
   delay(STEP_MS);
 }
+#endif
