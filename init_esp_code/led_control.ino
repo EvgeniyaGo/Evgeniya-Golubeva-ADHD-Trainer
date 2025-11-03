@@ -1,3 +1,4 @@
+#if 0
 #include <Arduino.h>
 #include <Wire.h>
 #include <cstring>   // for std::strcmp
@@ -246,3 +247,4 @@ void loop() {
   lastAxis = dom;
   delay(PERIOD);
 }
+#endif
