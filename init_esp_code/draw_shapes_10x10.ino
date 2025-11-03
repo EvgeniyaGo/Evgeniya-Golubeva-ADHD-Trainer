@@ -1,36 +1,34 @@
-// === WS2812B 10x10 – EXACT GRID SHAPES (THIN + THICK) =====================
-// Board: ESP32; Pin: D19
+// === WS2812B 10x10 – THIN (D18) + THICK (D19) =====================
+// Board: ESP32
 // Library: Adafruit NeoPixel
-
 #include <Adafruit_NeoPixel.h>
 
-// ---------- Types & API ----------
+// ---------- Types ----------
 enum Thickness { THIN, THICK };
 enum ColorName { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE };
 enum ShapeId {
-  SHAPE_1_THIN = 0,
-  SHAPE_2_THIN,
-  SHAPE_3_THIN,
-  SHAPE_4_THIN,
-  SHAPE_5_THIN,
-  SHAPE_6_THIN,
-  SHAPE_7_THIN,
-  SHAPE_8_THIN,
-  SHAPE_9_THIN,
+  SHAPE_1_THIN = 0, SHAPE_2_THIN, SHAPE_3_THIN, SHAPE_4_THIN, SHAPE_5_THIN,
+  SHAPE_6_THIN, SHAPE_7_THIN, SHAPE_8_THIN, SHAPE_9_THIN, SHAPE_10_THIN
 };
 
-// ---------- Panel config ----------
-#define PIN       19
+// ---------- Pins & panel config ----------
+#define PIN_THIN   18   // panel for THIN shapes
+#define PIN_THICK  19   // panel for THICK shapes
+
 static const uint8_t  W = 10, H = 10;
 static const uint8_t  BRIGHTNESS = 64;
-static const uint16_t SHOW_MS = 2000;   // time per shape
+static const uint16_t SHOW_MS     = 2000;   // time per shape
 
 // Orientation (global)
 static const bool FLIP_X = false;
 static const bool FLIP_Y = false;
 static const bool SWAP_XY = false;
+// Set to true if your panel is serpentine-wired (zig-zag rows)
+static const bool SERPENTINE = false;
 
-Adafruit_NeoPixel strip(W*H, PIN, NEO_GRB + NEO_KHZ800);
+// ---------- Strips ----------
+Adafruit_NeoPixel stripThin (W * H, PIN_THIN,  NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripThick(W * H, PIN_THICK, NEO_GRB + NEO_KHZ800);
 
 // ---------- SHAPES (THIN + THICK) ----------
 const char* SHAPE1_THIN[10] = {
@@ -124,10 +122,10 @@ const char* SHAPE4_THICK[10] = {
   "..XXXXX...",
   ".XXXXXXXX.",
   "XXX....XX.",
-  "XXX.......",
+  "XXX.....X.",
   "XX........",
   "XX........",
-  "XXX.......",
+  "XXX.....X.",
   "XXX....XX.",
   ".XXXXXXXX.",
   "..XXXXX...",
@@ -257,68 +255,108 @@ const char* SHAPE9_THICK[10] = {
   "....XX....",
   "....XX....",
 };
+const char* SHAPE10_THIN[10] = {
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+};
+const char* SHAPE10_THICK[10] = {
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+  "XXXXXXXXXX",
+};
 
 // Registries
-static const char** THIN_SET[9] = {
+static const char** THIN_SET[10] = {
   SHAPE1_THIN, SHAPE2_THIN, SHAPE3_THIN, SHAPE4_THIN, SHAPE5_THIN,
-  SHAPE6_THIN, SHAPE7_THIN, SHAPE8_THIN, SHAPE9_THIN
+  SHAPE6_THIN, SHAPE7_THIN, SHAPE8_THIN, SHAPE9_THIN, SHAPE10_THIN
 };
-static const char** THICK_SET[9] = {
+static const char** THICK_SET[10] = {
   SHAPE1_THICK, SHAPE2_THICK, SHAPE3_THICK, SHAPE4_THICK, SHAPE5_THICK,
-  SHAPE6_THICK, SHAPE7_THICK, SHAPE8_THICK, SHAPE9_THICK
+  SHAPE6_THICK, SHAPE7_THICK, SHAPE8_THICK, SHAPE9_THICK, SHAPE10_THICK
 };
 
-// ---------- Panel ----------
-struct Panel10x10 {
-  static uint32_t colorFrom(ColorName name){
+// ---------- Helpers (wrapped in a struct to avoid Arduino auto-prototypes) ----------
+struct Draw {
+  static inline uint32_t pxColor(Adafruit_NeoPixel& s, ColorName name){
     switch(name){
-      case BLUE:   return strip.Color(0,0,255);
-      case YELLOW: return strip.Color(255,200,0);
-      case RED:    return strip.Color(255,0,0);
-      case GREEN:  return strip.Color(0,255,0);
-      case PURPLE: return strip.Color(160,0,160);
-      case WHITE: default: return strip.Color(255,255,255);
+      case BLUE:   return s.Color(0,0,255);
+      case YELLOW: return s.Color(255,200,0);
+      case RED:    return s.Color(255,0,0);
+      case GREEN:  return s.Color(0,255,0);
+      case PURPLE: return s.Color(160,0,160);
+      case WHITE: default: return s.Color(255,255,255);
     }
   }
+
   static inline uint16_t xyToIndex(uint8_t x, uint8_t y){
-    uint8_t tx=x, ty=y;
-    if(SWAP_XY){uint8_t t=tx;tx=ty;ty=t;}
-    if(FLIP_X) tx=(W-1)-tx;
-    if(FLIP_Y) ty=(H-1)-ty;
-    return uint16_t(ty)*W+tx;
+    uint8_t tx = x, ty = y;
+    if (SWAP_XY){ uint8_t t = tx; tx = ty; ty = t; }
+    if (FLIP_X) tx = (W-1) - tx;
+    if (FLIP_Y) ty = (H-1) - ty;
+    if (!SERPENTINE) return uint16_t(ty) * W + tx;
+    // serpentine mapping: even rows L->R, odd rows R->L
+    bool odd = (ty & 1);
+    return odd ? uint16_t(ty)*W + (W-1 - tx) : uint16_t(ty)*W + tx;
   }
-  static void setXY(uint8_t x,uint8_t y,uint32_t c){
-    if(x>=W||y>=H)return;
-    strip.setPixelColor(xyToIndex(x,y),c);
+
+  static inline void setXY(Adafruit_NeoPixel& s, uint8_t x, uint8_t y, uint32_t c){
+    if (x >= W || y >= H) return;
+    s.setPixelColor(xyToIndex(x,y), c);
   }
-  static void drawFromMask(const char* rows[10],uint32_t color){
-    strip.clear();
-    for(uint8_t y=0;y<10;++y){
-      const char* r=rows[y];
-      for(uint8_t x=0;x<10;++x)
-        if(r[x]=='X') setXY(x,y,color);
+
+  static void fromMask(Adafruit_NeoPixel& s, const char* rows[10], uint32_t color){
+    s.clear();
+    for(uint8_t y=0; y<10; ++y){
+      const char* r = rows[y];
+      for(uint8_t x=0; x<10; ++x){
+        if (r[x] == 'X') setXY(s, x, y, color);
+      }
     }
-    strip.show();
+    s.show();
   }
-  void begin(){ strip.begin(); strip.setBrightness(BRIGHTNESS); strip.show(); }
-  void drawShape(ShapeId s,Thickness t,ColorName c){
-    const char*** set=(t==THICK)?THICK_SET:THIN_SET;
-    drawFromMask(set[s],colorFrom(c));
+
+  static void shape(Adafruit_NeoPixel& s, ShapeId id, Thickness t, ColorName c){
+    const char*** set = (t == THICK) ? THICK_SET : THIN_SET;
+    fromMask(s, set[id], pxColor(s, c));
   }
-} panel10x10;
+};
 
 // ---------- Demo ----------
 void setup(){
-  panel10x10.begin();
+  stripThin.begin();
+  stripThin.setBrightness(BRIGHTNESS);
+  stripThin.show();
+
+  stripThick.begin();
+  stripThick.setBrightness(BRIGHTNESS);
+  stripThick.show();
 }
 
 void loop(){
-  ColorName colors[9] = { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE, BLUE, YELLOW, RED };
+  // Color per shape index
+  ColorName colors[10] = { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE, BLUE, YELLOW, GREEN, WHITE};
 
-  for (int i = 0; i < 9; i++) {
-    panel10x10.drawShape((ShapeId)i, THIN, colors[i]);
-    delay(SHOW_MS);
-    panel10x10.drawShape((ShapeId)i, THICK, colors[i]);
+  for (int i = 0; i < 10; i++) {
+    // Draw same index on both panels:
+    //   THIN  -> D18
+    //   THICK -> D19
+    Draw::shape(stripThin,  (ShapeId)i, THIN,  colors[i]);
+    Draw::shape(stripThick, (ShapeId)i, THICK, colors[i]);
     delay(SHOW_MS);
   }
 }
