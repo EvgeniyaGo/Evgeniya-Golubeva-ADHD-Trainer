@@ -1,0 +1,390 @@
+/* ========== Base / Theme ========== */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root{
+  --page: #f6f7f9;
+  --card: #ffffff;
+  --ink: #1f3347;
+  --muted: #5d7693;
+  --ok: #27c595;
+  --warn: #f6a666;
+  --neutral: #b8c8d6;
+  --border: #e7eef5;
+  --shadow: 0 12px 40px rgba(25,35,52,.12), 0 3px 10px rgba(25,35,52,.06);
+  --inset: inset 0 1px 0 rgba(255,255,255,.6);
+
+  --sidebar-w: 300px;
+  --sidebar-collapsed: 72px;
+}
+
+*{ box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body{
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  color: var(--ink);
+  background: var(--page);
+}
+
+/* ========== App Shell ========== */
+.app-frame{
+  min-height: 100dvh;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.board{
+  width: 100%;
+  height: 100dvh;
+  background: var(--card);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+/* ========== Top Bar ========== */
+.board-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  height: 64px;
+  padding: 0 18px;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  /* temporary offset to avoid UI overlap on some environments */
+  margin-top: 35px;
+}
+.board-header > *{ min-width: 0; }
+
+/* Top-left & top-right clusters */
+.top-right{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Icon buttons (menu, account) */
+.menu-toggle{
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: var(--inset);
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.menu-toggle:hover{ background:#f5f7fa; }
+
+.menu-toggle.top-icon{
+  flex: 0 0 auto;
+  width: 40px; height: 40px;
+  padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 0;
+}
+.menu-toggle.top-icon svg{ width:26px; height:26px; display:block; }
+
+/* Status chip (clickable) */
+.status-chip{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  box-shadow: var(--inset);
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;             /* enable ellipsis */
+}
+.status-text{
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot{
+  width: 12px; height: 12px;
+  border-radius: 999px;
+  background: #cbd6e2;
+  transition: background .2s ease;
+}
+.dot.on{ background: var(--ok); }
+
+/* ========== Body: Sidebar + Content ========== */
+.board-shell{
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;  /* left sidebar */
+  height: 100%;
+  overflow: hidden;
+  transition: grid-template-columns .25s ease;
+}
+.app-frame.menu-closed .board-shell{
+  grid-template-columns: var(--sidebar-collapsed) 1fr;
+}
+
+/* Sidebar */
+.sidebar{
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff, #f9fbff);
+  display: flex; flex-direction: column;
+  width: var(--sidebar-w);
+  transition: width .25s ease;
+  overflow: hidden;
+}
+.sidebar.open  { width: var(--sidebar-w); }
+.sidebar.closed{ width: var(--sidebar-collapsed); }
+
+.sidebar-head{
+  padding: 14px 16px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nav{
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px;
+}
+.nav-item{
+  display: flex; align-items: center; justify-content: center; /* icon centered when collapsed */
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--inset);
+  cursor: pointer;
+  transition: background .2s ease, outline-color .2s ease;
+}
+.nav-item:hover{ background:#f5f8fb; }
+.nav-item.is-active{ outline: 2px solid #eaf2ff; background:#f7faff; }
+
+/* Text-left when open; icon-only when closed */
+.sidebar.open .nav-item{ justify-content: flex-start; }
+.sidebar.closed .nav-item{ padding: 10px; }
+.sidebar.closed .nav-item svg{ margin: auto; }
+
+.divider{ height:1px; background:var(--border); margin:8px 4px; }
+
+/* ========== Main Content ========== */
+.board-content{
+  display: flex; align-items: center; justify-content: center;
+  padding: clamp(18px, 3vw, 36px);
+  overflow: auto;
+}
+.stack{
+  width: min(960px, 100%);
+  display: flex; flex-direction: column;
+  gap: 20px;
+}
+.stack.center{ align-items: center; text-align: center; justify-content: center; height: 100%; }
+
+.status{ font-size: clamp(18px, 2vw, 22px); font-weight: 700; }
+.lead{ color: var(--muted); font-size: clamp(14px, 1.4vw, 16px); }
+
+/* Buttons */
+.btn{
+  border: 0; border-radius: 14px;
+  padding: 13px 18px;
+  font-weight: 700; cursor: pointer;
+  box-shadow: var(--inset), 0 6px 16px rgba(0,0,0,.08);
+  transition: transform .06s ease, box-shadow .2s ease, filter .2s ease;
+}
+.btn:active{ transform: translateY(1px); }
+.btn:disabled{ filter: saturate(.2) opacity(.7); cursor: not-allowed; }
+.btn-primary{ background: var(--ok); color:#fff; }
+.btn-neutral{ background: var(--neutral); color:#163046; }
+.btn-accent{ background: var(--warn); color:#fff; }
+
+/* Subtle placement for the Start/Stop button */
+.actions.subtle{ margin-top: 6px; }
+.actions.subtle .btn{ opacity: .7; }
+.actions.subtle .btn:disabled{ opacity: .4; }
+
+/* Card / Log */
+.card{
+  margin: 6px auto 0;
+  width: min(880px, 100%);
+  background: linear-gradient(180deg, #ffffff, #f7fbff);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(23,35,52,.06);
+  text-align: left;
+  padding: 14px;
+}
+.card h3{ margin: 6px 10px 10px; font-size: clamp(18px, 1.8vw, 20px); }
+.log{
+  background:#f3f7fb; border:1px solid var(--border); border-radius:12px;
+  padding:12px; max-height: 40dvh; overflow:auto; white-space:pre-wrap;
+  color:#425a75; font-size:14px;
+}
+
+/* ========== Responsive ========== */
+@media (max-width: 860px){
+  .board-shell{ grid-template-columns: 1fr; }
+  .sidebar{
+    position: absolute;
+    left: 0; top: calc(64px + 1px + 35px); /* below header + the margin-top offset */
+    height: calc(100% - 64px - 1px - 35px);
+    box-shadow: 16px 0 40px rgba(0,0,0,.08);
+    border-right: 1px solid var(--border);
+  }
+}
+
+/* ====== Responsive helpers ====== */
+@media (max-width: 600px){
+  /* Header: keep only icons + chip, compact height */
+  .board-header{
+    height: 56px;
+    padding: 0 12px;
+    margin-top: 35px; /* keep your env offset */
+  }
+
+  /* Shell becomes single column; no sidebar line when closed */
+  .board-shell{
+    grid-template-columns: 1fr;
+    position: relative;
+  }
+
+  /* Sidebar becomes a full-screen modal that covers everything */
+  .sidebar{
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: calc(56px + 1px + 35px); /* exactly below the header */
+    bottom: 0;
+    width: 100vw;
+    max-width: 100vw;
+    border-right: 0;                /* no line when closed */
+    box-shadow: none;
+    background: #fff;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    z-index: 30;                    /* above content */
+  }
+  .app-frame.menu-open .sidebar{
+    transform: translateX(0);
+  }
+
+  /* Backdrop that dims content under the opened menu */
+  .backdrop{
+    position: fixed;
+    left: 0; right: 0;
+    top: calc(56px + 1px + 35px);
+    bottom: 0;
+    background: rgba(23,35,52,.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+    z-index: 20;
+  }
+  .app-frame.menu-open .backdrop{
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Sidebar menu items: bigger touch targets */
+  .nav{
+    gap: 10px;
+    padding: 16px;
+  }
+  .nav-item{
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 14px;
+  }
+  .sidebar.closed{ width: 100vw; }  /* width is irrelevant in overlay mode */
+
+  /* Center content: comfy on phone */
+  .board-content{
+    padding: 16px;
+  }
+  .stack{
+    gap: 16px;
+    width: 100%;
+  }
+  .status{ font-size: 18px; }
+  .lead{ font-size: 14px; line-height: 1.45; }
+
+  .card{
+    width: 100%;
+    padding: 12px;
+    border-radius: 14px;
+  }
+  .card h3{ font-size: 18px; }
+
+  .log{
+    max-height: 42dvh;
+    font-size: 13px;
+  }
+
+  /* Status chip stays readable, but tighter */
+  .status-chip{
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .status-text{ font-size: 12.5px; }
+
+  /* Icon buttons */
+  .menu-toggle.top-icon{
+    width: 38px; height: 38px;
+    border-radius: 10px;
+  }
+
+  /* Hide any phantom lines from sidebar when closed (defensive) */
+  .app-frame.menu-closed .sidebar{
+    border-right: 0 !important;
+  }
+}
+
+/* ====== Tablet (between phone & desktop) ====== */
+@media (min-width: 601px) and (max-width: 1024px){
+  .board-header{
+    height: 60px;
+    padding: 0 16px;
+  }
+
+  .board-shell{
+    grid-template-columns: 220px 1fr;        /* narrower sidebar */
+  }
+  .app-frame.menu-closed .board-shell{
+    grid-template-columns: var(--sidebar-collapsed) 1fr;
+  }
+
+  .sidebar{
+    width: 220px;
+  }
+
+  .nav-item{
+    padding: 12px 14px;
+    border-radius: 12px;
+    font-size: 15px;
+  }
+
+  .board-content{
+    padding: clamp(16px, 3vw, 28px);
+  }
+  .stack{
+    width: min(820px, 100%);
+    gap: 18px;
+  }
+  .status{ font-size: clamp(18px, 2.2vw, 20px); }
+  .lead{ font-size: clamp(14px, 1.6vw, 15px); }
+  .card{ width: min(760px, 100%); }
+}
+
+/* ====== Small polish for ALL sizes ====== */
+/* Keep top-right icons perfectly centered vertically */
+.top-right{ align-items: center; }
+
+/* Ensure long device names never break the header */
+.status-chip{ max-width: min(52vw, 380px); }
+@media (max-width: 600px){
+  .status-chip{ max-width: 62vw; }
+}
