@@ -1,3 +1,4 @@
+#if 0
 // === WS2812B 10x10 – THIN (D18) + THICK (D19) =====================
 // Board: ESP32
 // Library: Adafruit NeoPixel
@@ -376,3 +377,4 @@ void loop(){
   Draw::shape(stripThick, SHAPE_10_THIN, THICK,  WHITE);
     delay(SHOW_MS);
 }
+#endif
