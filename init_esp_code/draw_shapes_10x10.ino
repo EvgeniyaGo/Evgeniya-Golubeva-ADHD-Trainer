@@ -12,12 +12,12 @@ enum ShapeId {
 };
 
 // ---------- Pins & panel config ----------
-#define PIN_THIN   18   // panel for THIN shapes
-#define PIN_THICK  19   // panel for THICK shapes
+#define PIN_THIN   13   // panel for THIN shapes
+#define PIN_THICK  14   // panel for THICK shapes
 
 static const uint8_t  W = 10, H = 10;
-static const uint8_t  BRIGHTNESS = 64;
-static const uint16_t SHOW_MS     = 2000;   // time per shape
+static const uint8_t  BRIGHTNESS = 128; //out of 255
+static const uint16_t SHOW_MS     = 4000;   // time per shape
 
 // Orientation (global)
 static const bool FLIP_X = false;
@@ -348,7 +348,7 @@ void setup(){
 }
 
 void loop(){
-  // Color per shape index
+//  Color per shape index
   ColorName colors[10] = { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE, BLUE, YELLOW, GREEN, WHITE};
 
   for (int i = 0; i < 10; i++) {
@@ -359,4 +359,20 @@ void loop(){
     Draw::shape(stripThick, (ShapeId)i, THICK, colors[i]);
     delay(SHOW_MS);
   }
+
+  Draw::shape(stripThin,  SHAPE_10_THIN, THIN,   RED);
+  Draw::shape(stripThick, SHAPE_10_THIN, THICK,  RED);
+    delay(SHOW_MS);
+
+  Draw::shape(stripThin,  SHAPE_10_THIN, THIN,   GREEN);
+  Draw::shape(stripThick, SHAPE_10_THIN, THICK,  GREEN);
+    delay(SHOW_MS);
+
+  Draw::shape(stripThin,  SHAPE_10_THIN, THIN,   BLUE);
+  Draw::shape(stripThick, SHAPE_10_THIN, THICK,  BLUE);
+    delay(SHOW_MS);
+
+  Draw::shape(stripThin,  SHAPE_10_THIN, THIN,   WHITE);
+  Draw::shape(stripThick, SHAPE_10_THIN, THICK,  WHITE);
+    delay(SHOW_MS);
 }
