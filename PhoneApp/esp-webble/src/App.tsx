@@ -138,34 +138,184 @@ export default function App() {
     isConnected ? "CONNECTED" :
     status === "disconnected" ? "DISCONNECTED" : "NOT CONNECTED";
 
-  return (
-    <div className="app-frame">
-      <div className="board">
-        <header className="board-header">
-          <div className="badge">
-            <span className={`dot ${isConnected ? "on" : ""}`} />
-            <span className="kicker">CUBE CONTROLLER</span>
-          </div>
-        </header>
+    const [menuOpen, setMenuOpen] = useState(true);          // ← right menu state (default open)
 
+return (
+  <div className={`app-frame ${menuOpen ? "menu-open" : "menu-closed"}`}>
+    <div className="board">
+      {/* ─── TOP MENU BAR ─────────────────────────────── */}
+      <header className="board-header">
+        {/* LEFT: menu icon */}
+        <button
+          className="menu-toggle top-icon"
+          aria-pressed={menuOpen}
+          aria-label={menuOpen ? "Collapse menu" : "Expand menu"}
+          title={menuOpen ? "Collapse menu" : "Expand menu"}
+          onClick={() => setMenuOpen((m) => !m)}
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            <path d="M3 7h18M3 12h18M3 17h18" stroke="#697586" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        {/* RIGHT: status chip + account icon */}
+        <div className="top-right">
+          <div
+            className="status-chip"
+            role="button"
+            tabIndex={0}
+            onClick={() => (isConnected ? disconnect() : connect())}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                isConnected ? disconnect() : connect();
+              }
+            }}
+            title={isConnected ? "Disconnect" : "Connect"}
+          >
+            <span className={`dot ${isConnected ? "on" : ""}`} />
+            <span className="status-text">
+              {status === "connected"
+                ? "CONNECTED"
+                : status === "connecting"
+                ? "CONNECTING…"
+                : "NOT CONNECTED"}
+              {name && isConnected ? ` — ${name}` : ""}
+            </span>
+          </div>
+
+          <button className="menu-toggle top-icon account-btn" aria-label="Account" title="Account">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="4" stroke="#697586" strokeWidth="2" />
+              <path
+                d="M4 20c1.8-3.2 4.7-5 8-5s6.2 1.8 8 5"
+                stroke="#697586"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </header>
+    {/* Backdrop for mobile overlay menu */}
+    <div
+      className={`backdrop ${menuOpen ? "show" : ""}`}
+      onClick={() => setMenuOpen(false)}
+      aria-hidden="true"
+    />
+
+      {/* ─── BODY: sidebar (left) + main content ───────── */}
+      <div className="board-shell">
+        <aside className={`sidebar ${menuOpen ? "open" : "closed"}`}>
+          <div className="sidebar-head">Menu</div>
+          <nav className="nav">
+            <button className="nav-item is-active" title="Dashboard">
+              {menuOpen ? (
+                "Dashboard"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 13h8V3H3v10zm10 8h8v-6h-8v6zM3 21h8v-6H3v6zm10-8h8V3h-8v10z" fill="#697586" />
+                </svg>
+              )}
+            </button>
+
+            <button className="nav-item" title="Connect">
+              {menuOpen ? (
+                "Connect"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M7 8h5a4 4 0 110 8H7" stroke="#697586" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M7 12h6" stroke="#697586" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              )}
+            </button>
+
+            <button className="nav-item" title="LED Control">
+              {menuOpen ? (
+                "LED Control"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="5" stroke="#697586" strokeWidth="2" />
+                  <path
+                    d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"
+                    stroke="#697586"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+            </button>
+
+            <button className="nav-item" title="Logs">
+              {menuOpen ? (
+                "Logs"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M5 4h14M5 8h14M5 12h10M5 16h8"
+                    stroke="#697586"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+            </button>
+
+            <button className="nav-item" title="Settings">
+              {menuOpen ? (
+                "Settings"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="#697586" strokeWidth="2" />
+                  <path
+                    d="M19.4 15a7.97 7.97 0 00.1-2l2-1-2-3-2 1a8.14 8.14 0 00-1.7-1l-.3-2.3h-4l-.3 2.3a8.14 8.14 0 00-1.7 1l-2-1-2 3 2 1a8.5 8.5 0 000 2l-2 1 2 3 2-1c.5.4 1.1.7 1.7 1l.3 2.3h4l.3-2.3c.6-.3 1.2-.6 1.7-1l2 1 2-3-2-1z"
+                    stroke="#697586"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </button>
+
+            <div className="divider" />
+
+            <button className="nav-item" title="About">
+              {menuOpen ? (
+                "About"
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="#697586" strokeWidth="2" />
+                  <path
+                    d="M12 8h.01M11 12h2v5h-2z"
+                    stroke="#697586"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+            </button>
+          </nav>
+        </aside>
+
+        {/* ─── MAIN CONTENT ─────────────────────────────── */}
         <main className="board-content">
-          <div className="stack">
-            <div className="status">{statusText}{name && isConnected ? ` — ${name}` : ""}</div>
+          <div className="stack center">
+            <div className="status">
+              {status === "connected"
+                ? "CONNECTED"
+                : status === "connecting"
+                ? "CONNECTING…"
+                : "NOT CONNECTED"}
+              {name && isConnected ? ` — ${name}` : ""}
+            </div>
+
             <div className="lead">
               Connect to your cube, then start or stop LED movement. Live results appear below.
             </div>
 
-            <div className="actions">
-              {!isConnected ? (
-                <button className="btn btn-primary" onClick={connect} disabled={status==="connecting"}>
-                  {status === "connecting" ? "Connecting…" : "Connect to ESP"}
-                </button>
-              ) : (
-                <button className="btn btn-neutral" onClick={disconnect}>
-                  Disconnect
-                </button>
-              )}
-              <button className="btn btn-accent" onClick={toggleMovement} disabled={!isConnected}>
+            <div className="actions subtle">
+              <button className="btn btn-neutral" onClick={toggleMovement} disabled={!isConnected}>
                 {moving ? "Stop LED movement" : "Start LED movement"}
               </button>
             </div>
@@ -176,13 +326,10 @@ export default function App() {
                 {log.length ? log.join("\n") : "— No messages yet —"}
               </div>
             </div>
-
-            <div className="lead" style={{marginTop: 2}}>
-              Tip: firmware should interpret <b>START</b> / <b>STOP</b> on NUS RX and send text status over NUS TX.
-            </div>
           </div>
         </main>
       </div>
     </div>
-  );
+  </div>
+);
 }

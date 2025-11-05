@@ -1,3 +1,4 @@
+#if 0
 #include <Arduino.h>
 #include <Wire.h>
 #include <cstring>
@@ -225,3 +226,4 @@ void loop(){
 
   delay(PERIOD);
 }
+#endif
