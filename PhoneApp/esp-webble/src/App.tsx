@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // --- NUS UUIDs (ESP32 Nordic UART Service) ---
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
