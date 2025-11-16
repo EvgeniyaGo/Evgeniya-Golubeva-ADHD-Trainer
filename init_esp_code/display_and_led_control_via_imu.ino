@@ -108,18 +108,14 @@ namespace App {
     }
   }
   static inline Face faceFromAxis(Axis ax, bool positive){
-    if (ax == AX_Z) return positive ? FACE_UP   : FACE_DOWN;
-    if (ax == AX_X) return positive ? FACE_RIGHT: FACE_LEFT;
-    if (ax == AX_Y) return positive ? FACE_FRONT: FACE_BACK;
+    if (ax == AX_Z) return positive ? FACE_BACK : FACE_FRONT;
+    if (ax == AX_X) return positive ? FACE_RIGHT : FACE_LEFT;
+    if (ax == AX_Y) return positive ? FACE_DOWN : FACE_UP;
     return FACE_UNKNOWN;
   }
-  static inline void setOnlyFaceIndicators(Face f){
-    digitalWrite(LED_UP,    f == FACE_UP    ? HIGH : LOW);
-    digitalWrite(LED_DOWN,  f == FACE_DOWN  ? HIGH : LOW);
-    digitalWrite(LED_LEFT,  f == FACE_LEFT  ? HIGH : LOW);
-    digitalWrite(LED_RIGHT, f == FACE_RIGHT ? HIGH : LOW);
-    digitalWrite(LED_FRONT, f == FACE_FRONT ? HIGH : LOW);
-    digitalWrite(LED_BACK,  f == FACE_BACK  ? HIGH : LOW);
+  static inline void setOnlyFaceIndicators(Face) {
+    // No separate indicator LEDs on this version of the cube.
+    // Orientation feedback is shown directly on the WS2812 panels.
   }
   static inline Adafruit_NeoPixel* stripForFace(Face f) {
     for (uint8_t i=0; i<NUM_PANELS; ++i) if (kPanels[i].face == f) return kPanels[i].strip;
@@ -128,7 +124,6 @@ namespace App {
 }
 
 // ───────────────────────── 10) Function declarations ─────────────
-static void initIndicators();
 static void startTrial();
 static void beginGameIfNeeded();
 static void clearAllPanels();
@@ -141,19 +136,9 @@ static void updateStableFace(Face newRaw, uint32_t now);
 static Face pickRandomPanelFace();
 
 // ───────────────────────── 11) Arduino setup ─────────────────────
-static void initIndicators() {
-  pinMode(LED_UP,     OUTPUT);
-  pinMode(LED_DOWN,   OUTPUT);
-  pinMode(LED_LEFT,   OUTPUT);
-  pinMode(LED_RIGHT,  OUTPUT);
-  pinMode(LED_FRONT,  OUTPUT);
-  pinMode(LED_BACK,   OUTPUT);
-  App::setOnlyFaceIndicators(FACE_UNKNOWN); // all LOW
-}
 
 void setup(){
   Serial.begin(115200);
-  initIndicators();
 
   Wire.begin(SDA_PIN, SCL_PIN);
   delay(5);
@@ -163,8 +148,13 @@ void setup(){
     while (true) { delay(1000); }
   }
 
-  stripThin.begin();  stripThin.setBrightness(BRIGHTNESS);  stripThin.show();
-  stripThick.begin(); stripThick.setBrightness(BRIGHTNESS); stripThick.show();
+  // Init all cube faces
+  for (uint8_t i = 0; i < NUM_PANELS; ++i) {
+    Adafruit_NeoPixel* s = kPanels[i].strip;
+    s->begin();
+    s->setBrightness(BRIGHTNESS);
+    s->show(); // clear
+  }
 
   // Seed EMA with first sample (optional)
   int16_t rx, ry, rz;

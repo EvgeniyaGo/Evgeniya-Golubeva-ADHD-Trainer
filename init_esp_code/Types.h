@@ -5,18 +5,17 @@ enum Face      { FACE_UP, FACE_DOWN, FACE_LEFT, FACE_RIGHT, FACE_FRONT, FACE_BAC
 enum GameState { PREPARE, HEADSTART, DISCOVERY, HOLD, SUCCESS_FB, FAIL_FB, INTER_TRIAL };
 
 // ───────────────────────── 2) Pins & panel config ─────────────────
-#define LED_UP     5
-#define LED_DOWN   18
-#define LED_LEFT   22
-#define LED_RIGHT  23
-#define LED_FRONT  21
-#define LED_BACK   19
+// I2C for ADXL345  (adjust to your actual wiring if needed!)
+#define SDA_PIN    21
+#define SCL_PIN    22
 
-#define SDA_PIN    25
-#define SCL_PIN    26
-
-#define PIN_THIN   13   // matrix #1
-#define PIN_THICK  14   // matrix #2
+// One WS2812 panel per cube face
+#define PIN_UP      26   // Up    face  data in
+#define PIN_DOWN    12   // Down  face
+#define PIN_LEFT    33   // Left  face
+#define PIN_RIGHT   25   // Right face
+#define PIN_BACK    14   // Back  face
+#define PIN_FRONT   27   // Front face
 
 static const uint8_t  W = 10, H = 10;
 static const uint8_t  BRIGHTNESS = 128;     // 0..255
@@ -52,13 +51,17 @@ static uint8_t colorIdRaw(const char* name){
 #define COLOR_ID(nameLiteral) ((ColorName)colorIdRaw(nameLiteral))
 #define COLOR_OF(nameEnum)    (PALETTE[(nameEnum)])
 
-// ───────────────────────── 4) Strips (declare ONCE) ──────────────
-Adafruit_NeoPixel stripThin (W * H, PIN_THIN,  NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel stripThick(W * H, PIN_THICK, NEO_GRB + NEO_KHZ800);
+// ───────────────────────── 4) Strips (one per face) ──────────────
+Adafruit_NeoPixel stripUp   (W * H, PIN_UP,    NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripDown (W * H, PIN_DOWN,  NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripLeft (W * H, PIN_LEFT,  NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripRight(W * H, PIN_RIGHT, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripBack (W * H, PIN_BACK,  NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripFront(W * H, PIN_FRONT, NEO_GRB + NEO_KHZ800);
 
-// Pack color using any strip (defaults to stripThin)
+// Pack color using any strip (defaults to 'up' panel)
 static inline uint32_t packColor(ColorName c, Adafruit_NeoPixel* s = nullptr) {
-  Adafruit_NeoPixel& ref = s ? *s : stripThin;
+  Adafruit_NeoPixel& ref = s ? *s : stripUp;
   RGB rgb = COLOR_OF(c);
   return ref.Color(rgb.r, rgb.g, rgb.b);
 }
@@ -69,8 +72,12 @@ static inline uint32_t packColor(const char* cName, Adafruit_NeoPixel* s = nullp
 // ───────────────────────── 5) Panel mapping ──────────────────────
 struct PanelMap { Face face; Adafruit_NeoPixel* strip; };
 static PanelMap kPanels[] = {
-  { FACE_LEFT,  &stripThin  },  // Panel A
-  { FACE_BACK,  &stripThick },  // Panel B
+  { FACE_UP,    &stripUp    },
+  { FACE_DOWN,  &stripDown  },
+  { FACE_LEFT,  &stripLeft  },
+  { FACE_RIGHT, &stripRight },
+  { FACE_FRONT, &stripFront },
+  { FACE_BACK,  &stripBack  },
 };
 static const uint8_t NUM_PANELS = sizeof(kPanels)/sizeof(kPanels[0]);
 
