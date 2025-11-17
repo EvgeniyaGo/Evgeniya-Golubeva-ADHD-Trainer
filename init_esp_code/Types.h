@@ -18,7 +18,7 @@ enum GameState { PREPARE, HEADSTART, DISCOVERY, HOLD, SUCCESS_FB, FAIL_FB, INTER
 #define PIN_FRONT   27   // Front face
 
 static const uint8_t  W = 10, H = 10;
-static const uint8_t  BRIGHTNESS = 128;     // 0..255
+static const uint8_t  BRIGHTNESS = 85;     // 0..255
 static const bool     SERPENTINE = false;   // set true if your panel is zig-zag
 static const bool     FLIP_X = false, FLIP_Y = false, SWAP_XY = false;
 

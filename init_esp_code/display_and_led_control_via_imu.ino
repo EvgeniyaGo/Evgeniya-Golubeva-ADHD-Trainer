@@ -1,3 +1,4 @@
+#if 0
 // === ESP32: ADXL345 face detector + 2 WS2812B matrices — Orientation Game ===
 // Libraries: Adafruit NeoPixel, Wire
 
@@ -388,3 +389,4 @@ void loop(){
 
   delay(PERIOD);
 }
+#endif
