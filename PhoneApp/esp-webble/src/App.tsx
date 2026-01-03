@@ -26,6 +26,10 @@ export default function App() {
   const [moving, setMoving] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(true);
+  const CMD_BEEP1 = "BEEP1\n";
+  const CMD_BEEP2 = "BEEP2\n";
+  const [gameOn, setGameOn] = useState(false);
+
 
   // ─── Packet test state ────────────────────────────────────────────
   const [testRunning, setTestRunning] = useState(false);
@@ -495,7 +499,47 @@ export default function App() {
                 >
                   {moving ? "Stop LED movement" : "Start LED movement"}
                 </button>
+
+                <button
+                className="btn btn-neutral"
+                onClick={() => writeLine(CMD_BEEP1)}
+                disabled={!isConnected}
+                title="Play 880 Hz beep"
+              >
+                Beep 1
+              </button>
+
+              <button
+                className="btn btn-neutral"
+                onClick={() => writeLine(CMD_BEEP2)}
+                disabled={!isConnected}
+                title="Play 1760 Hz beep"
+              >
+                Beep 2
+              </button>
+                <br></br>
+              <button
+                className="btn btn-neutral"
+                disabled={!isConnected}
+                onClick={() => {
+                  const next = !gameOn;
+                  setGameOn(next);
+                  writeLine(`GAME ${next ? 1 : 0}`);
+                }}
+              >
+                {gameOn ? "Stop game" : "Start game"}
+              </button>
+
+              <button
+                className="btn btn-neutral"
+                disabled={!isConnected || !gameOn}
+                onClick={() => writeLine("NEW_FACE")}
+              >
+                New face
+              </button>
+
               </div>
+
 
               <div className="card">
                 <h3>Results from ESP</h3>

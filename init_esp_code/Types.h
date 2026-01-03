@@ -1,4 +1,6 @@
 #pragma once
+#include <Arduino.h>
+#include <Adafruit_NeoPixel.h>
 
 // ───────────────────────── 1) Types FIRST ─────────────────────────
 enum ColorName { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE };
@@ -8,14 +10,14 @@ enum GameState { PREPARE, HEADSTART, DISCOVERY, HOLD, SUCCESS_FB, FAIL_FB, INTER
 
 // ───────────────────────── 2) Pins & panel config ─────────────────
 // I2C for ADXL345  (adjust to your actual wiring if needed!)
-#define SDA_PIN    21
-#define SCL_PIN    22
+//#define SDA_PIN    21
+//#define SCL_PIN    22
 
 // One WS2812 panel per cube face
 #define PIN_UP      26   // Up    face  data in
 #define PIN_DOWN    12   // Down  face
 #define PIN_LEFT    33   // Left  face
-#define PIN_RIGHT   25   // Right face
+#define PIN_RIGHT   32   // Right face
 #define PIN_BACK    14   // Back  face
 #define PIN_FRONT   27   // Front face
 
@@ -98,3 +100,170 @@ Face  rawFace  = FACE_UNKNOWN;
 const uint32_t T_STABLE_MS = 200;
 Face  stableFace = FACE_UNKNOWN;
 uint32_t faceChangeSince = 0;
+
+// ───────────────────────── IMU → face + tilt% logic ────────────────────────
+enum FaceId : uint8_t {
+  FACE_UP_ID = 0,
+  FACE_DOWN_ID,
+  FACE_LEFT_ID,
+  FACE_RIGHT_ID,
+  FACE_FRONT_ID,
+  FACE_BACK_ID,
+  FACE_UNKNOWN_ID
+};
+
+struct ImuState {
+  FaceId upFace = FACE_UNKNOWN_ID;
+  float tiltPercent = 100.0f; // 0=perfect, 100=90deg
+};
+
+static inline void rotateAroundX(float &y, float &z, float deg){
+  float a = deg * 0.0174532925f;
+  float cy = cosf(a), sy = sinf(a);
+  float y2 = y*cy - z*sy;
+  float z2 = y*sy + z*cy;
+  y = y2; z = z2;
+}
+
+static inline void rotateAroundY(float &x, float &z, float deg){
+  float a = deg * 0.0174532925f;
+  float cy = cosf(a), sy = sinf(a);
+  float x2 = x*cy + z*sy;
+  float z2 = -x*sy + z*cy;
+  x = x2; z = z2;
+}
+
+static inline void rotateAroundZ(float &x, float &y, float deg){
+  float a = deg * 0.0174532925f;
+  float cz = cosf(a), sz = sinf(a);
+  float x2 = x*cz - y*sz;
+  float y2 = x*sz + y*cz;
+  x = x2; y = y2;
+}
+
+
+// ───────────────────────── Draw helpers ──────────────────────────
+struct Draw {
+  static inline uint16_t xyToIndex(uint8_t x, uint8_t y){
+    uint8_t tx = x, ty = y;
+    if (SWAP_XY){ uint8_t t = tx; tx = ty; ty = t; }
+    if (FLIP_X) tx = (W-1) - tx;
+    if (FLIP_Y) ty = (H-1) - ty;
+    if (!SERPENTINE) return uint16_t(ty) * W + tx;
+    bool odd = (ty & 1);
+    return odd ? uint16_t(ty)*W + (W-1 - tx) : uint16_t(ty)*W + tx;
+  }
+
+  static inline void setXY(Adafruit_NeoPixel& s, uint8_t x, uint8_t y, uint32_t c){
+    if (x >= W || y >= H) return;
+    s.setPixelColor(xyToIndex(x,y), c);
+  }
+};
+
+static inline bool isValidUp(float tiltPercent) { return tiltPercent <= 30.0f; }
+
+static inline uint8_t tiltToAccuracyLevel(float tiltPercent) {
+  if (tiltPercent <= 5.0f)  return 0;
+  if (tiltPercent <= 15.0f) return 1;
+  if (tiltPercent <= 25.0f) return 2;
+  return 3;
+}
+
+static inline ImuState classifyFromAccel(float ax, float ay, float az) {
+  ImuState st;
+
+  float g = sqrtf(ax*ax + ay*ay + az*az);
+  if (g < 1e-3f) return st;
+
+  float nx = ax / g;
+  float ny = ay / g;
+  float nz = az / g;
+
+  // "Up direction" is -gravity
+  float ux = -nx, uy = -ny, uz = -nz;
+
+  float axAbs = fabsf(ux), ayAbs = fabsf(uy), azAbs = fabsf(uz);
+
+  float best = azAbs;
+  st.upFace = (uz >= 0) ? FACE_UP_ID : FACE_DOWN_ID;
+
+  if (axAbs > best) {
+    best = axAbs;
+    st.upFace = (ux >= 0) ? FACE_RIGHT_ID : FACE_LEFT_ID;
+  }
+  if (ayAbs > best) {
+    best = ayAbs;
+    st.upFace = (uy >= 0) ? FACE_FRONT_ID : FACE_BACK_ID;
+  }
+
+  float angleRad = acosf(fminf(1.0f, fmaxf(-1.0f, best)));
+  float angleDeg = angleRad * 57.2957795f;
+
+  st.tiltPercent = (angleDeg / 90.0f) * 100.0f;
+  if (st.tiltPercent < 0) st.tiltPercent = 0;
+  if (st.tiltPercent > 100) st.tiltPercent = 100;
+
+  return st;
+}
+
+// ───────────────────────── Pattern drawing ─────────────────────────
+static void drawRingOutline(Adafruit_NeoPixel &s, uint8_t side, uint32_t c) {
+  if (side < 1 || side > W || side > H) return;
+
+  uint8_t start = (W - side) / 2;
+  uint8_t end   = start + side - 1;
+
+  // top & bottom
+  for (uint8_t x = start; x <= end; ++x) {
+    Draw::setXY(s, x, start, c);
+    Draw::setXY(s, x, end,   c);
+  }
+
+  // left & right (skip corners to avoid double-write, optional)
+  for (uint8_t y = start + 1; y + 1 <= end; ++y) {
+    Draw::setXY(s, start, y, c);
+    Draw::setXY(s, end,   y, c);
+  }
+}
+
+static inline void fillCenter4x4(Adafruit_NeoPixel &s, uint32_t c) {
+  for (uint8_t y = 3; y <= 6; y++) {
+    for (uint8_t x = 3; x <= 6; x++) {
+      Draw::setXY(s, x, y, c);
+    }
+  }
+}
+
+static void renderLevelPattern(Adafruit_NeoPixel &s, uint8_t level, uint32_t cFill, uint32_t cRing) {
+  s.clear();
+
+  // Always center filled
+  fillCenter4x4(s, cFill);
+
+  // Rings only (empty between them)
+  if (level >= 1) drawRingOutline(s, 6,  cRing);
+  if (level >= 2) drawRingOutline(s, 8,  cRing);
+  if (level >= 3) drawRingOutline(s, 10, cRing);
+
+  s.show();
+}
+
+static inline uint32_t colorGray(Adafruit_NeoPixel &s)     { return s.Color(80, 80, 80); }
+static inline uint32_t colorBlue(Adafruit_NeoPixel &s)     { return s.Color(20, 80, 255); }
+static inline uint32_t colorBlueGreen(Adafruit_NeoPixel &s){ return s.Color(0, 220, 200); }
+
+static inline uint8_t faceToPanelIndex(FaceId f) {
+  switch (f) {
+    case FACE_UP_ID:    return 1; // was 0
+    case FACE_DOWN_ID:  return 0; // was 1
+
+    case FACE_LEFT_ID:  return 3; // was 2
+    case FACE_RIGHT_ID: return 2; // was 3
+
+    case FACE_FRONT_ID: return 4;
+    case FACE_BACK_ID:  return 5;
+
+    default:            return 0;
+  }
+}
+

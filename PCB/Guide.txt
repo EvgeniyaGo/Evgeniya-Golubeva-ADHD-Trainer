@@ -1,0 +1,18 @@
+base-schematic-08 is the final version with ESP + IMU + DAC + Space for speaker + Jacks
+...-05 is old tracing
+The Gerber file is named V1. Text - v1
+[USE THIS]
+
+base-schematic-03 is the final version with ESP + IMU + DAC + Space for speaker + Jacks + 6 Resistors + DIP
+
+base-schematic-04 is the final version with ESP + IMU + DAC + Space for speaker + Jacks + 6 Resistors + DIP + 2 Caps
+The Gerber file is named V3. - Text - v3
+[USE THIS]
+
+base-schematic-07 is the final version with ESP + IMU + DAC + Space for speaker + Jacks + 6 Resistors + 1 Cap
+...-06 is old tracing
+The Gerber file is named     - Text - v2
+[USE THIS]
+
+
+
