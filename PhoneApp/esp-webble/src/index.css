@@ -283,6 +283,7 @@ body{
     pointer-events: none;
     transition: opacity .2s ease;
     z-index: 20;
+    max-height: 10px;
   }
   .app-frame.menu-open .backdrop{
     opacity: 1;

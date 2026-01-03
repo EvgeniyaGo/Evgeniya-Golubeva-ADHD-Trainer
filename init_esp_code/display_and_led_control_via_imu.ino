@@ -1,175 +1,14 @@
-// === ESP32: ADXL345 face detector + 2 WS2812B matrices (Shape 1 on active face) ===
-// Board: ESP32
+#if 0
+// === ESP32: ADXL345 face detector + 2 WS2812B matrices — Orientation Game ===
 // Libraries: Adafruit NeoPixel, Wire
 
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
-#include <cstring>
 #include <math.h>
+#include <Types.h>
 
-// ===================== Types first (avoid Arduino proto conflicts) =====================
-enum Thickness { THIN, THICK };
-enum ColorName { BLUE, YELLOW, RED, GREEN, PURPLE, WHITE };
-enum ShapeId {
-  SHAPE_1_THIN = 0, SHAPE_2_THIN, SHAPE_3_THIN, SHAPE_4_THIN, SHAPE_5_THIN,
-  SHAPE_6_THIN, SHAPE_7_THIN, SHAPE_8_THIN, SHAPE_9_THIN, SHAPE_10_THIN
-};
-enum Axis { AX_X, AX_Y, AX_Z, AX_NONE };
-enum Face { FACE_UP, FACE_DOWN, FACE_LEFT, FACE_RIGHT, FACE_FRONT, FACE_BACK, FACE_UNKNOWN };
-
-// ===================== Indicator LED pins (one per face) =====================
-#define LED_UP     5
-#define LED_DOWN   18
-#define LED_LEFT   22
-#define LED_RIGHT  23
-#define LED_FRONT  21
-#define LED_BACK   19
-
-// ===================== I2C pins (ADXL345) =====================
-#define SDA_PIN    25
-#define SCL_PIN    26
-
-// ===================== WS2812B panel pins & config =====================
-#define PIN_THIN   13   // matrix #1
-#define PIN_THICK  14   // matrix #2
-
-static const uint8_t  W = 10, H = 10;
-static const uint8_t  BRIGHTNESS = 128;     // 0..255
-static const bool     SERPENTINE = false;   // set true if your panel is zig-zag
-static const bool     FLIP_X = false, FLIP_Y = false, SWAP_XY = false;
-
-// ===================== NeoPixel strips =====================
-Adafruit_NeoPixel stripThin (W * H, PIN_THIN,  NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel stripThick(W * H, PIN_THICK, NEO_GRB + NEO_KHZ800);
-
-// ===================== Shapes (THIN + THICK) =====================
-const char* SHAPE1_THIN[10] = {
-  "..........",
-  ".XXXXXXXX.",
-  ".X......X.",
-  ".X......X.",
-  ".X......X.",
-  ".X......X.",
-  ".X......X.",
-  ".X......X.",
-  ".XXXXXXXX.",
-  "..........",
-};
-const char* SHAPE1_THICK[10] = {
-  "..........",
-  ".XXXXXXXX.",
-  ".XXXXXXXX.",
-  ".XX....XX.",
-  ".XX....XX.",
-  ".XX....XX.",
-  ".XX....XX.",
-  ".XXXXXXXX.",
-  ".XXXXXXXX.",
-  "..........",
-};
-
-const char* SHAPE2_THIN[10] = {
-  "....XX....","..XX..XX..",".X......X.",".X......X.","X........X",
-  "X........X",".X......X.",".X......X.","..XX..XX..","....XX....",
-};
-const char* SHAPE2_THICK[10] = {
-  "..XXXXXX..",".XXXXXXXX.","XXX....XXX","XX......XX","XX......XX",
-  "XX......XX","XX......XX","XXX....XXX",".XXXXXXXX.","..XXXXXX..",
-};
-
-const char* SHAPE3_THIN[10] = {
-  "....XX....","...X..X...","...X..X...","..X....X..","..X....X..",
-  ".X......X.",".X......X.","X........X","XXXXXXXXXX","..........",
-};
-const char* SHAPE3_THICK[10] = {
-  "....XX....","...XXXX...","..XX..XX..","..XX..XX..",".XX....XX.",
-  ".XX....XX.","XX......XX","XX......XX","XXXXXXXXXX","XXXXXXXXXX",
-};
-
-const char* SHAPE4_THIN[10] = {
-  "..XXXXXX..",".XXX...XX.","XXX.....X.","XX........","XX........",
-  "XX........","XX........","XXX.....X.",".XXX...XX.","..XXXXXX..",
-};
-const char* SHAPE4_THICK[10] = {
-  "..XXXXX...",".XXXXXXXX.","XXX....XX.","XXX.....X.","XX........",
-  "XX........","XXX.....X.","XXX....XX.",".XXXXXXXX.","..XXXXX...",
-};
-
-const char* SHAPE5_THIN[10] = {
-  "....XX....","...X..X...","..XX..XX..","..X....X..",".X......X.",
-  ".X......X.","..X....X..","..XX..XX..","...X..X...","....XX....",
-};
-const char* SHAPE5_THICK[10] = {
-  "....XX....","...XXXX...","..XX..XX..",".XX....XX.","XX......XX",
-  "XX......XX",".XX....XX.","..XX..XX..","...XXXX...","....XX....",
-};
-
-const char* SHAPE6_THIN[10] = {
-  "...XXXX...","...X..X...","...X..X...","XXXX..XXXX","X........X",
-  "X........X","XXXX..XXXX","...X..X...","...X..X...","...XXXX...",
-};
-const char* SHAPE6_THICK[10] = {
-  "..XXXXXX..","..XXXXXX..","XXXX..XXXX","XXXX..XXXX","XX......XX",
-  "XX......XX","XXXX..XXXX","XXXX..XXXX","..XXXXXX..","..XXXXXX..",
-};
-
-const char* SHAPE7_THIN[10] = {
-  "..........","..........","..........",".......X..",".......XX.",
-  "XXXXXXXXXX",".......XX.",".......X..","..........","..........",
-};
-const char* SHAPE7_THICK[10] = {
-  "..........","......X...","......XX..","......XXX.","XXXXXXXXXX",
-  "XXXXXXXXXX","......XXX.","......XX..","......X...","..........",
-};
-
-const char* SHAPE8_THIN[10] = {
-  "..........","..........",".......X..",".......XX.","....XXXXXX",
-  "...XX..XX.","...X...X..","...X......","...X......","...X......",
-};
-const char* SHAPE8_THICK[10] = {
-  "..........",".......X..",".......XX.","....XXXXXX","...XXXXXXX",
-  "...XX..XX.","...XX..X..","...XX.....","...XX.....","...XX.....",
-};
-
-const char* SHAPE9_THIN[10] = {
-  "..........",".....X....","....X.X...","...X...X..","....X.X...",
-  ".....X....",".....X....",".....X....",".....X....",".....X....",
-};
-const char* SHAPE9_THICK[10] = {
-  "..........","....XX....","...XXXX...","..XX..XX..","..XX..XX..",
-  "...XXXX...","....XX....","....XX....","....XX....","....XX....",
-};
-
-const char* SHAPE10_THIN[10] = {
-  "XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX",
-  "XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX",
-};
-const char* SHAPE10_THICK[10] = {
-  "XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX",
-  "XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX","XXXXXXXXXX",
-};
-
-static const char** THIN_SET[10] = {
-  SHAPE1_THIN, SHAPE2_THIN, SHAPE3_THIN, SHAPE4_THIN, SHAPE5_THIN,
-  SHAPE6_THIN, SHAPE7_THIN, SHAPE8_THIN, SHAPE9_THIN, SHAPE10_THIN
-};
-static const char** THICK_SET[10] = {
-  SHAPE1_THICK, SHAPE2_THICK, SHAPE3_THICK, SHAPE4_THICK, SHAPE5_THICK,
-  SHAPE6_THICK, SHAPE7_THICK, SHAPE8_THICK, SHAPE9_THICK, SHAPE10_THICK
-};
-
-// ===================== Draw helpers =====================
+// ───────────────────────── 7) Draw helpers (struct Draw) ─────────
 struct Draw {
-  static inline uint32_t pxColor(Adafruit_NeoPixel& s, ColorName name){
-    switch(name){
-      case BLUE:   return s.Color(0,0,255);
-      case YELLOW: return s.Color(255,200,0);
-      case RED:    return s.Color(255,0,0);
-      case GREEN:  return s.Color(0,255,0);
-      case PURPLE: return s.Color(160,0,160);
-      case WHITE: default: return s.Color(255,255,255);
-    }
-  }
   static inline uint16_t xyToIndex(uint8_t x, uint8_t y){
     uint8_t tx = x, ty = y;
     if (SWAP_XY){ uint8_t t = tx; tx = ty; ty = t; }
@@ -183,23 +22,26 @@ struct Draw {
     if (x >= W || y >= H) return;
     s.setPixelColor(xyToIndex(x,y), c);
   }
-  static void fromMask(Adafruit_NeoPixel& s, const char* rows[10], uint32_t color){
+  static void clear(Adafruit_NeoPixel& s){ s.clear(); s.show(); }
+  static void square2x2(Adafruit_NeoPixel& s, uint32_t color){
     s.clear();
-    for(uint8_t y=0; y<10; ++y){
-      const char* r = rows[y];
-      for(uint8_t x=0; x<10; ++x){
-        if (r[x] == 'X') setXY(s, x, y, color);
-      }
-    }
+    uint8_t cx = W/2, cy = H/2;
+    for (int dy=-1; dy<=0; ++dy)
+      for (int dx=-1; dx<=0; ++dx)
+        setXY(s, cx+dx, cy+dy, color);
     s.show();
   }
-  static void shape(Adafruit_NeoPixel& s, ShapeId id, Thickness t, ColorName c){
-    const char*** set = (t == THICK) ? THICK_SET : THIN_SET;
-    fromMask(s, set[id], pxColor(s, c));
+  static void square4x4(Adafruit_NeoPixel& s, uint32_t color){
+    s.clear();
+    uint8_t cx = W/2, cy = H/2;
+    for (int dy=-2; dy<=1; ++dy)
+      for (int dx=-2; dx<=1; ++dx)
+        setXY(s, cx+dx, cy+dy, color);
+    s.show();
   }
 };
 
-// ===================== Minimal ADXL345 driver =====================
+// ───────────────────────── 8) ADXL345 (minimal) ──────────────────
 namespace ADXL345 {
   constexpr uint8_t REG_DEVID    = 0x00;
   constexpr uint8_t REG_BW_RATE  = 0x2C;
@@ -236,7 +78,11 @@ namespace ADXL345 {
   }
   inline bool probeAt(uint8_t addr) {
     I2C_ADDR = addr;
-    return (read8(REG_DEVID) == 0xE5);
+    Wire.beginTransmission(I2C_ADDR);
+    Wire.write(REG_DEVID);
+    Wire.endTransmission(false);
+    Wire.requestFrom(I2C_ADDR, (uint8_t)1);
+    return Wire.available() && (Wire.read() == 0xE5);
   }
   inline bool begin() {
     if (!probeAt(0x53) && !probeAt(0x1D)) return false;
@@ -248,37 +94,9 @@ namespace ADXL345 {
   }
 }
 
-// ===================== Face detection tuning =====================
-const float ALPHA      = 0.25f;  // EMA
-const float MIN_G      = 6.5f;   // m/s^2 threshold on dominant axis
-const float HYSTERESIS = 0.6f;   // m/s^2 bias to last axis
-const uint16_t PERIOD  = 40;     // ms loop ~25 Hz
-
-const float LSB_TO_MPS2 = 0.0039f * 9.80665f;
-const int8_t SIGN_X = +1, SIGN_Y = +1, SIGN_Z = +1;
-
-// ===================== State =====================
-float xf = 0.0f, yf = 0.0f, zf = 9.81f;
-Axis  lastAxis = AX_NONE;
-Face  lastFace = FACE_UNKNOWN;
-
-// ===================== LED state booleans (indicator diodes) =====================
-bool ledUpState=false, ledDownState=false, ledLeftState=false, ledRightState=false, ledFrontState=false, ledBackState=false;
-
-// ===================== Matrix color for Shape 1 =====================
-static const ColorName MATRIX_COLOR = WHITE;
-
-// ===================== CONFIG: which faces have matrices =====================
-struct PanelMap { Face face; Adafruit_NeoPixel* strip; Thickness thick; };
-PanelMap kPanels[] = {
-  { FACE_LEFT,    &stripThin,  THIN  },  // Matrix #1 shows Shape 1 when UP is active
-  { FACE_BACK, &stripThick, THICK },  // Matrix #2 shows Shape 1 when RIGHT is active
-};
-
-// ===================== App helpers (namespaced to defeat auto-prototypes) =====================
+// ───────────────────────── 9) App helpers (indicators, mapping) ──
 namespace App {
   static inline float ema(float prev, float sample, float a) { return prev + a * (sample - prev); }
-
   static inline const char* faceName(Face f){
     switch(f){
       case FACE_UP:    return "Upward";
@@ -290,76 +108,39 @@ namespace App {
       default:         return "Unknown";
     }
   }
-
   static inline Face faceFromAxis(Axis ax, bool positive){
-    if (ax == AX_Z) return positive ? FACE_UP   : FACE_DOWN;
-    if (ax == AX_X) return positive ? FACE_RIGHT: FACE_LEFT;
-    if (ax == AX_Y) return positive ? FACE_FRONT: FACE_BACK;
+    if (ax == AX_Z) return positive ? FACE_BACK : FACE_FRONT;
+    if (ax == AX_X) return positive ? FACE_RIGHT : FACE_LEFT;
+    if (ax == AX_Y) return positive ? FACE_DOWN : FACE_UP;
     return FACE_UNKNOWN;
   }
-
-  static inline void allOffIndicators() {
-    digitalWrite(LED_UP,    LOW);
-    digitalWrite(LED_DOWN,  LOW);
-    digitalWrite(LED_LEFT,  LOW);
-    digitalWrite(LED_RIGHT, LOW);
-    digitalWrite(LED_FRONT, LOW);
-    digitalWrite(LED_BACK,  LOW);
+  static inline void setOnlyFaceIndicators(Face) {
+    // No separate indicator LEDs on this version of the cube.
+    // Orientation feedback is shown directly on the WS2812 panels.
   }
-
-  static inline void applyLedBools() {
-    digitalWrite(LED_UP,     ledUpState    ? HIGH : LOW);
-    digitalWrite(LED_DOWN,   ledDownState  ? HIGH : LOW);
-    digitalWrite(LED_LEFT,   ledLeftState  ? HIGH : LOW);
-    digitalWrite(LED_RIGHT,  ledRightState ? HIGH : LOW);
-    digitalWrite(LED_FRONT,  ledFrontState ? HIGH : LOW);
-    digitalWrite(LED_BACK,   ledBackState  ? HIGH : LOW);
-  }
-
-  static inline void setOnlyFaceIndicators(Face f){
-    ledUpState = ledDownState = ledLeftState = ledRightState = ledFrontState = ledBackState = false;
-    switch(f){
-      case FACE_UP:    ledUpState    = true; break;
-      case FACE_DOWN:  ledDownState  = true; break;
-      case FACE_LEFT:  ledLeftState  = true; break;
-      case FACE_RIGHT: ledRightState = true; break;
-      case FACE_FRONT: ledFrontState = true; break;
-      case FACE_BACK:  ledBackState  = true; break;
-      default: break;
-    }
-    applyLedBools();
-  }
-
-  static inline void clearStrip(Adafruit_NeoPixel& s){ s.clear(); s.show(); }
-
-  // Show Shape 1 on the panel mapped to `f`, clear other panels.
-  static inline void updatePanelsForFace(Face f){
-    clearStrip(stripThin);
-    clearStrip(stripThick);
-    for (auto &pm : kPanels){
-      if (pm.face == f && pm.strip){
-        Draw::shape(*pm.strip, SHAPE_1_THIN /*index 0*/, pm.thick, MATRIX_COLOR);
-      }
-    }
+  static inline Adafruit_NeoPixel* stripForFace(Face f) {
+    for (uint8_t i=0; i<NUM_PANELS; ++i) if (kPanels[i].face == f) return kPanels[i].strip;
+    return nullptr;
   }
 }
 
-// ===================== Arduino lifecycle =====================
-static void initIndicators() {
-  pinMode(LED_UP,     OUTPUT);
-  pinMode(LED_DOWN,   OUTPUT);
-  pinMode(LED_LEFT,   OUTPUT);
-  pinMode(LED_RIGHT,  OUTPUT);
-  pinMode(LED_FRONT,  OUTPUT);
-  pinMode(LED_BACK,   OUTPUT);
-  App::allOffIndicators();
-}
+// ───────────────────────── 10) Function declarations ─────────────
+static void startTrial();
+static void beginGameIfNeeded();
+static void clearAllPanels();
+static void ensureCue(Face target, ColorName c);
+static void ensureCue(Face target, const char* colorName);
+static void ensureFeedback(Face target, ColorName c);
+static void ensureFeedback(Face target, const char* colorName);
+static Face detectRawFaceFromAccel(int16_t rx, int16_t ry, int16_t rz);
+static void updateStableFace(Face newRaw, uint32_t now);
+static Face pickRandomPanelFace();
+
+// ───────────────────────── 11) Arduino setup ─────────────────────
 
 void setup(){
   Serial.begin(115200);
-  initIndicators();
 
-  // Start I2C
   Wire.begin(SDA_PIN, SCL_PIN);
   delay(5);
 
@@ -368,7 +149,15 @@ void setup(){
     while (true) { delay(1000); }
   }
 
-  // Seed EMA with first sample
+  // Init all cube faces
+  for (uint8_t i = 0; i < NUM_PANELS; ++i) {
+    Adafruit_NeoPixel* s = kPanels[i].strip;
+    s->begin();
+    s->setBrightness(BRIGHTNESS);
+    s->show(); // clear
+  }
+
+  // Seed EMA with first sample (optional)
   int16_t rx, ry, rz;
   if (ADXL345::readXYZ_raw(rx, ry, rz)) {
     xf = (SIGN_X * rx) * LSB_TO_MPS2;
@@ -376,19 +165,84 @@ void setup(){
     zf = (SIGN_Z * rz) * LSB_TO_MPS2;
   }
 
-  // Panels
-  stripThin.begin();  stripThin.setBrightness(BRIGHTNESS);  stripThin.show();
-  stripThick.begin(); stripThick.setBrightness(BRIGHTNESS); stripThick.show();
-
-  Serial.println("Ready. Face → indicator LED + mapped matrix shows Shape 1.");
+  randomSeed((uint32_t)esp_random() ^ micros());
+  Serial.println("Ready. Orientation game initialized.");
 }
 
-void loop(){
-  // Read ADXL345
-  int16_t rx, ry, rz;
-  if (!ADXL345::readXYZ_raw(rx, ry, rz)) { delay(PERIOD); return; }
+// ───────────────────────── 12) Game state + helpers ──────────────
+GameState gState = PREPARE;
+const uint32_t T_HEADSTART_MS = 2000;
+const uint32_t T_DISCOVERY_MS = 5000; // deadline to first align
+const uint32_t T_HOLD_MS      = 3000; // continuous hold
+const uint32_t T_FEEDBACK_MS  = 3000;
 
-  // Convert & smooth
+Face   targetFace = FACE_UNKNOWN;
+bool   discovered = false;
+uint32_t stateStart = 0;
+uint32_t lastTick   = 0;   // pacing serial prints
+uint32_t holdAccum  = 0;   // ms
+uint32_t lastSample = 0;
+
+// Absolute DISCOVERY deadline (fix for returning from HOLD)
+uint32_t discoveryDeadline = 0;
+
+enum DrawMode : uint8_t { MODE_NONE=0, MODE_CUE2, MODE_FEEDBACK4 };
+struct DrawState { DrawMode mode; Face face; ColorName color; };
+static DrawState gDraw = { MODE_NONE, FACE_UNKNOWN, WHITE };
+
+static void clearAllPanels(){
+  for (uint8_t i=0; i<NUM_PANELS; ++i) Draw::clear(*kPanels[i].strip);
+  gDraw = { MODE_NONE, FACE_UNKNOWN, WHITE };
+}
+
+static void ensureCue(Face target, ColorName c){
+  if (gDraw.mode == MODE_CUE2 && gDraw.face == target && gDraw.color == c) return;
+  clearAllPanels();
+  if (Adafruit_NeoPixel* s = App::stripForFace(target))
+    Draw::square2x2(*s, packColor(c, s));
+  gDraw = { MODE_CUE2, target, c };
+}
+static void ensureCue(Face target, const char* colorName){
+  ensureCue(target, (ColorName)colorIdRaw(colorName));
+}
+static void ensureFeedback(Face target, ColorName c){
+  if (gDraw.mode == MODE_FEEDBACK4 && gDraw.face == target && gDraw.color == c) return;
+  clearAllPanels();
+  if (Adafruit_NeoPixel* s = App::stripForFace(target))
+    Draw::square4x4(*s, packColor(c, s));
+  gDraw = { MODE_FEEDBACK4, target, c };
+}
+static void ensureFeedback(Face target, const char* colorName){
+  ensureFeedback(target, (ColorName)colorIdRaw(colorName));
+}
+
+static Face pickRandomPanelFace() {
+  if (NUM_PANELS == 0) return FACE_UNKNOWN;
+  return kPanels[random(0, NUM_PANELS)].face;
+}
+
+static void startTrial() {
+  targetFace = pickRandomPanelFace();
+  discovered = false;
+  holdAccum = 0;
+  gState = HEADSTART;
+  stateStart = millis();
+  lastTick = stateStart;
+
+  discoveryDeadline = 0; // will be set when DISCOVERY starts
+
+  ensureCue(targetFace, WHITE);           // draw once (no flicker)
+  App::setOnlyFaceIndicators(targetFace);
+
+  Serial.printf("\n=== New Trial: target=%s ===\n", App::faceName(targetFace));
+}
+
+static void beginGameIfNeeded() {
+  if (gState == PREPARE) startTrial();
+}
+
+// ───────────────────────── 13) Face utilities ─────────────────────
+static Face detectRawFaceFromAccel(int16_t rx, int16_t ry, int16_t rz){
   float ax_mps2 = (SIGN_X * rx) * LSB_TO_MPS2;
   float ay_mps2 = (SIGN_Y * ry) * LSB_TO_MPS2;
   float az_mps2 = (SIGN_Z * rz) * LSB_TO_MPS2;
@@ -399,34 +253,140 @@ void loop(){
 
   float ax = fabsf(xf), ay = fabsf(yf), az = fabsf(zf);
 
-  // Hysteresis
   if (lastAxis == AX_X)      ax += HYSTERESIS;
   else if (lastAxis == AX_Y) ay += HYSTERESIS;
   else if (lastAxis == AX_Z) az += HYSTERESIS;
 
-  // Dominant axis
   Axis dom; bool pos; float domMag;
   if (ax >= ay && ax >= az)      { dom = AX_X; pos = (xf > 0); domMag = ax; }
   else if (ay >= ax && ay >= az) { dom = AX_Y; pos = (yf > 0); domMag = ay; }
   else                           { dom = AX_Z; pos = (zf > 0); domMag = az; }
 
-  Face face = FACE_UNKNOWN;
-  if (domMag >= MIN_G) face = App::faceFromAxis(dom, pos);
+  lastAxis = dom;
+  return (domMag >= MIN_G) ? App::faceFromAxis(dom, pos) : FACE_UNKNOWN;
+}
 
-  if (face != lastFace){
-    Serial.println(App::faceName(face));
+static void updateStableFace(Face newRaw, uint32_t now){
+  static Face lastRaw = FACE_UNKNOWN;
+  if (newRaw != lastRaw) { lastRaw = newRaw; faceChangeSince = now; }
+  if (now - faceChangeSince >= T_STABLE_MS && stableFace != newRaw)
+    stableFace = newRaw;
+}
 
-    if (face == FACE_UNKNOWN){
-      App::allOffIndicators();
-      App::clearStrip(stripThin);
-      App::clearStrip(stripThick);
-    } else {
-      App::setOnlyFaceIndicators(face); // light the diode
-      App::updatePanelsForFace(face);   // show Shape 1 on mapped matrix (if any)
-    }
-    lastFace = face;
+// ───────────────────────── 14) Main loop ─────────────────────────
+void loop(){
+  // Read ADXL345 and compute faces
+  int16_t rx, ry, rz;
+  if (ADXL345::readXYZ_raw(rx, ry, rz)) {
+    rawFace = detectRawFaceFromAccel(rx, ry, rz);
+    updateStableFace(rawFace, millis());
   }
 
-  lastAxis = dom;
+  // Start game if not started
+  beginGameIfNeeded();
+
+  // FSM
+  uint32_t now = millis();
+  switch (gState) {
+    case HEADSTART:
+      if (now - stateStart >= T_HEADSTART_MS) {
+        gState = DISCOVERY;
+        stateStart = lastTick = now;
+
+        // set the absolute deadline ONCE for this trial
+        discoveryDeadline = now + T_DISCOVERY_MS;
+
+        Serial.println("DISCOVERY: 5");
+        ensureCue(targetFace, "white");
+        App::setOnlyFaceIndicators(targetFace);
+      }
+      break;
+
+    case DISCOVERY: {
+      // countdown display, based on absolute deadline
+      if (now - lastTick >= 1000) {
+        int secsLeft = (discoveryDeadline > now)
+          ? (int)((discoveryDeadline - now + 999) / 1000)
+          : 0;
+        Serial.printf("DISCOVERY: %d\n", secsLeft);
+        lastTick = now;
+      }
+
+      if (!discovered && stableFace == targetFace) {
+        discovered = true;
+        gState = HOLD;
+        holdAccum = 0;
+        lastSample = lastTick = now;
+        Serial.println("HOLD: 3");
+      }
+
+      if (!discovered && now >= discoveryDeadline) {
+        gState = FAIL_FB;
+        stateStart = now;
+        ensureFeedback(targetFace, "red");
+        App::setOnlyFaceIndicators(FACE_UNKNOWN);
+        Serial.println("FAIL: not found in time");
+      }
+      break;
+    }
+
+    case HOLD: {
+      uint32_t dt = now - lastSample; lastSample = now;
+
+      if (stableFace == targetFace) {
+        holdAccum += dt;
+      } else {
+        // ⇩ return to DISCOVERY without resetting deadline
+        discovered = false;
+        gState = DISCOVERY;
+        lastTick = now; // for clean 1s prints
+        holdAccum = 0;  // reset hold timer
+        ensureCue(targetFace, "white");
+        App::setOnlyFaceIndicators(targetFace);
+        break; // exit HOLD case early
+      }
+
+      if (now - lastTick >= 250) {
+        uint32_t remaining = (holdAccum >= T_HOLD_MS) ? 0 : (T_HOLD_MS - holdAccum);
+        int s = (remaining + 999) / 1000; // ceil
+        Serial.printf("HOLD: %d\n", s);
+        lastTick = now;
+      }
+
+      App::setOnlyFaceIndicators(targetFace);
+      ensureCue(targetFace, "white"); // idempotent
+
+      if (holdAccum >= T_HOLD_MS) {
+        gState = SUCCESS_FB;
+        stateStart = now;
+        ensureFeedback(targetFace, "green");
+        App::setOnlyFaceIndicators(FACE_UNKNOWN);
+        Serial.println("SUCCESS");
+      }
+      break;
+    }
+
+    case SUCCESS_FB:
+    case FAIL_FB:
+      if (now - stateStart >= T_FEEDBACK_MS) {
+        gState = INTER_TRIAL;
+        stateStart = now;
+        clearAllPanels();
+      }
+      break;
+
+    case INTER_TRIAL:
+      if (now - stateStart >= 500) {
+        gState = PREPARE;
+        startTrial();
+      }
+      break;
+
+    case PREPARE:
+    default:
+      break;
+  }
+
   delay(PERIOD);
 }
+#endif
