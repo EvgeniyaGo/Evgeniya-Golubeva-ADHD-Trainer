@@ -39,6 +39,28 @@ FaceId parseFace(const String &s) {
   return FACE_UNKNOWN;
 }
 
+ShapeId parseShape(const String &s) {
+  if (s == "SHAPE_ARROW_UP")    return SHAPE_ARROW_UP;
+  if (s == "SHAPE_ARROW_DOWN")  return SHAPE_ARROW_DOWN;
+  if (s == "SHAPE_ARROW_LEFT")  return SHAPE_ARROW_LEFT;
+  if (s == "SHAPE_ARROW_RIGHT") return SHAPE_ARROW_RIGHT;
+  if (s == "SHAPE_CIRCLE_6X6")  return SHAPE_CIRCLE_6X6;
+  return SHAPE_COUNT;
+}
+
+ColorId parseColor(const String &s) {
+  if (s == "COLOR_BLACK")  return COLOR_BLACK;
+  if (s == "COLOR_BLUE")   return COLOR_BLUE;
+  if (s == "COLOR_GREEN")  return COLOR_GREEN;
+  if (s == "COLOR_YELLOW") return COLOR_YELLOW;
+  if (s == "COLOR_RED")    return COLOR_RED;
+  if (s == "COLOR_PURPLE") return COLOR_PURPLE;
+  if (s == "COLOR_CYAN")   return COLOR_CYAN;
+  if (s == "COLOR_ORANGE") return COLOR_ORANGE;
+  if (s == "COLOR_WHITE")  return COLOR_WHITE;
+  return COLOR_COUNT;
+}
+
 // ───────────────────────── Cube adjacency (1 step) ─────────────────────────
 Vec3 faceNormal(FaceId f) {
   switch (f) {
@@ -129,8 +151,80 @@ void handleCommand(const String &raw) {
   String upper = line;
   upper.toUpperCase();
 
+  if (upper.startsWith("CLEAR ALL")) {
+    clearAllFaces();
+    nusSend("OK CLEAR ALL\n");
+    return;
+  }
+
+  // CLEAR FACE TOP
+  if (upper.startsWith("CLEAR FACE")) {
+    int idx = upper.indexOf(' ', 11); // after "CLEAR FACE"
+    if (idx < 0) {
+      nusSend("ERR BAD_FORMAT\n");
+      return;
+    }
+
+    String faceStr = upper.substring(11);
+    faceStr.trim();
+
+    FaceId face = parseFace(faceStr);
+    if (face == FACE_UNKNOWN) {
+      nusSend("ERR UNKNOWN_FACE\n");
+      return;
+    }
+
+    clearFace(face);
+    nusSend("OK CLEAR FACE\n");
+    return;
+  }
+
+
   // Expected:
-  // DRAW ARROW ON TOP TOWARDS LEFT
+  // DRAW SHAPE FACE_TOP SHAPE_ARROW_LEFT COLOR_BLUE
+  if (upper.startsWith("DRAW SHAPE ")) {
+
+    String tokens[5];
+    uint8_t count = 0;
+
+    int start = 0;
+    for (int i = 0; i <= upper.length(); i++) {
+      if (i == upper.length() || upper[i] == ' ') {
+        if (count < 5) tokens[count++] = upper.substring(start, i);
+        start = i + 1;
+      }
+    }
+
+    if (count != 5) {
+      nusSend("ERR BAD_DRAW_FORMAT\n");
+      return;
+    }
+
+    FaceId  face  = parseFace(tokens[2]);
+    ShapeId shape = parseShape(tokens[3]);
+    ColorId color = parseColor(tokens[4]);
+
+    if (face >= FACE_COUNT) {
+      nusSend("ERR UNKNOWN_FACE\n");
+      return;
+    }
+    if (shape >= SHAPE_COUNT) {
+      nusSend("ERR UNKNOWN_SHAPE\n");
+      return;
+    }
+    if (color >= COLOR_COUNT) {
+      nusSend("ERR UNKNOWN_COLOR\n");
+      return;
+    }
+
+    clearFace(face);
+    mapToDisplay(face, shape, color, DISPLAY_STATIC);
+    nusSend("OK DRAW SHAPE\n");
+    return;
+  }
+
+  // Expected:
+  // DRAW ARROW ON FACE_TOP TOWARDS FACE_LEFT
   if (upper.startsWith("DRAW ")) {
 
     String tokens[8];
@@ -165,21 +259,22 @@ void handleCommand(const String &raw) {
       return;
     }
 
-  ShapeId arrow;
-  if (!arrowFromTo(from, to, arrow)) {
-    nusSend("ERR UNREACHABLE\n");
+    ShapeId arrow;
+    if (!arrowFromTo(from, to, arrow)) {
+      nusSend("ERR UNREACHABLE\n");
+      return;
+    }
+
+    clearAllFaces();
+    mapToDisplay(from, arrow, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(to, SHAPE_CIRCLE_6X6, COLOR_GREEN, DISPLAY_STATIC);
+    nusSend("OK DRAW ARROW\n");
     return;
   }
-
-  clearAllFaces();
-  mapToDisplay(from, arrow, COLOR_BLUE, DISPLAY_STATIC);
-  mapToDisplay(to, SHAPE_CIRCLE_6X6, COLOR_GREEN, DISPLAY_STATIC);
-  nusSend("OK DRAW\n");
-    return;
-  }
-
   nusSend("ERR UNKNOWN_CMD\n");
 }
+
+
 
 // ───────────────────────── BLE callbacks ─────────────────────────
 class ServerCallbacks : public BLEServerCallbacks {
