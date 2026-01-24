@@ -107,7 +107,7 @@ export default function App() {
               const parts = line.trim().split(/\s+/);
               if (parts.length !== 3) return;
 
-              const from = parts[2]; // "TOP", "LEFT", ...
+              const from = parts[2] as FaceId; // "TOP", "LEFT", ...
               console.log(`[SRV] END ROUND ${from}`);
 
               handleEndRound(from);
@@ -218,6 +218,39 @@ export default function App() {
     await writeLine(next ? CMD_START : CMD_STOP);
   }, [moving, writeLine]);
 
+  const adjacency: Record<FaceId, FaceId[]> = {
+  TOP:    ["FRONT", "BACK", "LEFT", "RIGHT"],
+  BOTTOM: ["FRONT", "BACK", "LEFT", "RIGHT"],
+  LEFT:   ["TOP", "BOTTOM", "FRONT", "BACK"],
+  RIGHT:  ["TOP", "BOTTOM", "FRONT", "BACK"],
+  FRONT:  ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+  BACK:   ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+};
+
+const arrowFromToShort = useCallback((from: FaceId, to: FaceId): ShapeId => {
+  return arrowFromTo(from, to);
+}, []);
+
+const handleEndRound = useCallback(
+  async (from: FaceId) => {
+    const options = adjacency[from];
+    if (!options || options.length === 0) return;
+
+    // choose random adjacent face
+    const to = options[Math.floor(Math.random() * options.length)];
+
+    const arrow = arrowFromToShort(from, to);
+
+    console.log(`[SRV] AUTO NEW ROUND ${from} → ${to} (${arrow})`);
+
+    await writeLine("CLEAR ALL\n");
+    await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
+    await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+  },
+  [writeLine, arrowFromToShort]
+);
+
+
   // ─── Manual command sender ──────────────────────────────────────
 const sendCommand = useCallback(async () => {
   const raw = command.trim();
@@ -257,82 +290,6 @@ const sendCommand = useCallback(async () => {
     setCommand("");
     return;
   }
-
-  const adjacency: Record<string, string[]> = {
-    TOP:    ["FRONT", "BACK", "LEFT", "RIGHT"],
-    BOTTOM: ["FRONT", "BACK", "LEFT", "RIGHT"],
-    LEFT:   ["TOP", "BOTTOM", "FRONT", "BACK"],
-    RIGHT:  ["TOP", "BOTTOM", "FRONT", "BACK"],
-    FRONT:  ["TOP", "BOTTOM", "LEFT", "RIGHT"],
-    BACK:   ["TOP", "BOTTOM", "LEFT", "RIGHT"],
-  };
-
-  function arrowFromToShort(from: string, to: string): string {
-  // assumes adjacency is valid
-  if (from === "TOP") {
-    if (to === "FRONT") return "SHAPE_ARROW_DOWN";
-    if (to === "BACK")  return "SHAPE_ARROW_UP";
-    if (to === "LEFT")  return "SHAPE_ARROW_LEFT";
-    if (to === "RIGHT") return "SHAPE_ARROW_RIGHT";
-  }
-
-  if (from === "BOTTOM") {
-    if (to === "FRONT") return "SHAPE_ARROW_UP";
-    if (to === "BACK")  return "SHAPE_ARROW_DOWN";
-    if (to === "LEFT")  return "SHAPE_ARROW_LEFT";
-    if (to === "RIGHT") return "SHAPE_ARROW_RIGHT";
-  }
-
-  if (from === "LEFT") {
-    if (to === "TOP")    return "SHAPE_ARROW_UP";
-    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
-    if (to === "FRONT")  return "SHAPE_ARROW_RIGHT";
-    if (to === "BACK")   return "SHAPE_ARROW_LEFT";
-  }
-
-  if (from === "RIGHT") {
-    if (to === "TOP")    return "SHAPE_ARROW_UP";
-    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
-    if (to === "FRONT")  return "SHAPE_ARROW_LEFT";
-    if (to === "BACK")   return "SHAPE_ARROW_RIGHT";
-  }
-
-  if (from === "FRONT") {
-    if (to === "TOP")    return "SHAPE_ARROW_UP";
-    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
-    if (to === "LEFT")   return "SHAPE_ARROW_LEFT";
-    if (to === "RIGHT")  return "SHAPE_ARROW_RIGHT";
-  }
-
-  if (from === "BACK") {
-    if (to === "TOP")    return "SHAPE_ARROW_DOWN";
-    if (to === "BOTTOM") return "SHAPE_ARROW_UP";
-    if (to === "LEFT")   return "SHAPE_ARROW_RIGHT";
-    if (to === "RIGHT")  return "SHAPE_ARROW_LEFT";
-  }
-
-  throw new Error(`Invalid arrow ${from} -> ${to}`);
-}
-
-async function handleEndRound(from: string) {
-  const options = adjacency[from];
-  if (!options || options.length === 0) return;
-
-  // choose random adjacent face
-  const to = options[Math.floor(Math.random() * options.length)];
-
-  const arrow = arrowFromToShort(from, to);
-
-  console.log(`[SRV] NEW ROUND ${from} → ${to} (${arrow})`);
-
-  // IMPORTANT: clear first
-  await writeLine("CLEAR ALL\n");
-
-  // send new round
-  await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
-  await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
-}
-
 
 
   // ── DEFAULT PASSTHROUGH ──────────────────────────────

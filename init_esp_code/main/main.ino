@@ -465,7 +465,6 @@ if (now - lastPrint > 300) {  // print ~3x per second
   // Check round completion
   if (currentTargetFace != FACE_UNKNOWN &&
       upFace == currentTargetFace &&
-      isFaceLocked() &&
       (now - upFaceSince) >= HOLD_TIME_MS) {
 
     String msg = "END ROUND ";
