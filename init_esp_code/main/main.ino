@@ -4,10 +4,23 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <BLE2902.h>
-
+#include <Wire.h>
 #include "types.h"
 #include "display_control.h"
 #include "imu_control.h"
+
+#define HOLD_TIME_MS 400
+
+static FaceId currentTargetFace = FACE_UNKNOWN;
+
+// hold detection
+static FaceId stableFace = FACE_UNKNOWN;
+static uint32_t stableSince = 0;
+
+// Hold-time detection
+static FaceId lastUpFace = FACE_UNKNOWN;
+static uint32_t upFaceSince = 0;
+
 
 // ───────────────────────── BLE UUIDs (NUS) ─────────────────────────
 static const char *NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
@@ -38,6 +51,19 @@ FaceId parseFace(const String &s) {
   if (s == "BACK")   return FACE_BACK;
   return FACE_UNKNOWN;
 }
+
+const char* faceToString(FaceId f) {
+  switch (f) {
+    case FACE_UP:    return "TOP";
+    case FACE_DOWN: return "BOTTOM";
+    case FACE_LEFT:   return "LEFT";
+    case FACE_RIGHT:  return "RIGHT";
+    case FACE_FRONT:  return "FRONT";
+    case FACE_BACK:   return "BACK";
+    default:          return "UNKNOWN";
+  }
+}
+
 
 ShapeId parseShape(const String &s) {
   if (s == "SHAPE_ARROW_UP")    return SHAPE_ARROW_UP;
@@ -183,7 +209,6 @@ void handleCommand(const String &raw) {
   // Expected:
   // DRAW SHAPE FACE_TOP SHAPE_ARROW_LEFT COLOR_BLUE
   if (upper.startsWith("DRAW SHAPE ")) {
-
     String tokens[5];
     uint8_t count = 0;
 
@@ -220,6 +245,11 @@ void handleCommand(const String &raw) {
     clearFace(face);
     mapToDisplay(face, shape, color, DISPLAY_STATIC);
     nusSend("OK DRAW SHAPE\n");
+
+    if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
+        currentTargetFace = face;
+    }
+
     return;
   }
 
@@ -322,6 +352,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 // ───────────────────────── setup / loop ─────────────────────────
 void setup() {
   Serial.begin(115200);
+  Wire.begin(SDA_PIN, SCL_PIN);
   delay(200);
   Serial.println("[ESP] Cube display tester");
 
@@ -385,5 +416,67 @@ void setup() {
 }
 
 void loop() {
-  // Event-driven tester → nothing here
+  // --- IMU update ---
+  updateImu();   // or imu_read(), whichever you already use
+
+  ImuState imu = getImuState();
+  uint32_t now = millis();
+  static uint32_t lastPrint = 0;
+
+if (now - lastPrint > 300) {  // print ~3x per second
+  ImuState imu = getImuState();
+  Serial.print("ax=");
+  Serial.print(imu.ax);
+  Serial.print(" ay=");
+  Serial.print(imu.ay);
+  Serial.print(" az=");
+  Serial.println(imu.az);
+
+  Serial.print("[IMU] upFace=");
+  Serial.print(faceToString(imu.upFace));
+
+  Serial.print("  tilt=");
+  Serial.print(imu.tiltPercent, 1);
+
+  Serial.print("  valid=");
+  Serial.print(isValidUpFace() ? "Y" : "N");
+
+  Serial.print("  locked=");
+  Serial.println(isFaceLocked() ? "Y" : "N");
+
+  lastPrint = now;
+}
+
+  FaceId upFace = imu.upFace;
+
+  // Only consider VALID faces
+  if (!isValidUpFace()) {
+    lastUpFace = FACE_UNKNOWN;
+    upFaceSince = now;
+    return;
+  }
+
+  // Track stability of UP face
+  if (upFace != lastUpFace) {
+    lastUpFace = upFace;
+    upFaceSince = now;
+  }
+
+  // Check round completion
+  if (currentTargetFace != FACE_UNKNOWN &&
+      upFace == currentTargetFace &&
+      isFaceLocked() &&
+      (now - upFaceSince) >= HOLD_TIME_MS) {
+
+    String msg = "END ROUND ";
+    msg += faceToString(upFace);  // MUST output TOP / LEFT / etc
+    msg += "\n";
+
+    nusSend(msg.c_str());
+
+    // Disarm until next round
+    currentTargetFace = FACE_UNKNOWN;
+  }
+
+  // --- rest of your loop (BLE, display, etc.) ---
 }

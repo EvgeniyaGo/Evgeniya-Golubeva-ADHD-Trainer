@@ -110,11 +110,11 @@ void updateImu() {
   int16_t rawZ = (int16_t)((uint16_t)b[5] << 8 | b[4]);
 
   const float G_PER_LSB = 0.004f; // approx in FULL_RES
-  float ax = rawX * G_PER_LSB;
-  float ay = rawY * G_PER_LSB;
+  float ax = -rawY * G_PER_LSB;
+  float ay = -rawX * G_PER_LSB;
   float az = rawZ * G_PER_LSB;
 
-  gImu.ax = ay; gImu.ay = ax; gImu.az = az;
+  gImu.ax = ax; gImu.ay = ay; gImu.az = az;
 
   gImu.upFace = faceFromAxes(ax, ay, az);
   gImu.tiltPercent = tiltPercentFromAxes(ax, ay, az);

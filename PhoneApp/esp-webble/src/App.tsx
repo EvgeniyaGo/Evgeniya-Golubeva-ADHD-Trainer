@@ -103,6 +103,17 @@ export default function App() {
             if (!line) return;
 
             // Handle PONG <seq> for packet test
+            if (line.startsWith("END ROUND")) {
+              const parts = line.trim().split(/\s+/);
+              if (parts.length !== 3) return;
+
+              const from = parts[2]; // "TOP", "LEFT", ...
+              console.log(`[SRV] END ROUND ${from}`);
+
+              handleEndRound(from);
+              return;
+            }
+
             if (line.startsWith("PONG ")) {
               const seqStr = line.substring(5).trim();
               const seq = Number(seqStr);
@@ -208,7 +219,6 @@ export default function App() {
   }, [moving, writeLine]);
 
   // ─── Manual command sender ──────────────────────────────────────
-// ─── Manual command sender ──────────────────────────────────────
 const sendCommand = useCallback(async () => {
   const raw = command.trim();
   if (!raw) return;
@@ -218,6 +228,13 @@ const sendCommand = useCallback(async () => {
   // ── INTERCEPT SEMANTIC ARROW ─────────────────────────
   // Expected:
   // DRAW ARROW FACE_TOP FACE_LEFT
+  if (upper.startsWith("ROUND ARROW")) {
+    // DO NOT send to ESP
+    await handleRoundArrow(upper);
+    setCommand("");
+    return;
+  }
+
   if (upper.startsWith("DRAW ARROW")) {
     const parts = upper.split(/\s+/);
 
@@ -240,6 +257,83 @@ const sendCommand = useCallback(async () => {
     setCommand("");
     return;
   }
+
+  const adjacency: Record<string, string[]> = {
+    TOP:    ["FRONT", "BACK", "LEFT", "RIGHT"],
+    BOTTOM: ["FRONT", "BACK", "LEFT", "RIGHT"],
+    LEFT:   ["TOP", "BOTTOM", "FRONT", "BACK"],
+    RIGHT:  ["TOP", "BOTTOM", "FRONT", "BACK"],
+    FRONT:  ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+    BACK:   ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+  };
+
+  function arrowFromToShort(from: string, to: string): string {
+  // assumes adjacency is valid
+  if (from === "TOP") {
+    if (to === "FRONT") return "SHAPE_ARROW_DOWN";
+    if (to === "BACK")  return "SHAPE_ARROW_UP";
+    if (to === "LEFT")  return "SHAPE_ARROW_LEFT";
+    if (to === "RIGHT") return "SHAPE_ARROW_RIGHT";
+  }
+
+  if (from === "BOTTOM") {
+    if (to === "FRONT") return "SHAPE_ARROW_UP";
+    if (to === "BACK")  return "SHAPE_ARROW_DOWN";
+    if (to === "LEFT")  return "SHAPE_ARROW_LEFT";
+    if (to === "RIGHT") return "SHAPE_ARROW_RIGHT";
+  }
+
+  if (from === "LEFT") {
+    if (to === "TOP")    return "SHAPE_ARROW_UP";
+    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
+    if (to === "FRONT")  return "SHAPE_ARROW_RIGHT";
+    if (to === "BACK")   return "SHAPE_ARROW_LEFT";
+  }
+
+  if (from === "RIGHT") {
+    if (to === "TOP")    return "SHAPE_ARROW_UP";
+    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
+    if (to === "FRONT")  return "SHAPE_ARROW_LEFT";
+    if (to === "BACK")   return "SHAPE_ARROW_RIGHT";
+  }
+
+  if (from === "FRONT") {
+    if (to === "TOP")    return "SHAPE_ARROW_UP";
+    if (to === "BOTTOM") return "SHAPE_ARROW_DOWN";
+    if (to === "LEFT")   return "SHAPE_ARROW_LEFT";
+    if (to === "RIGHT")  return "SHAPE_ARROW_RIGHT";
+  }
+
+  if (from === "BACK") {
+    if (to === "TOP")    return "SHAPE_ARROW_DOWN";
+    if (to === "BOTTOM") return "SHAPE_ARROW_UP";
+    if (to === "LEFT")   return "SHAPE_ARROW_RIGHT";
+    if (to === "RIGHT")  return "SHAPE_ARROW_LEFT";
+  }
+
+  throw new Error(`Invalid arrow ${from} -> ${to}`);
+}
+
+async function handleEndRound(from: string) {
+  const options = adjacency[from];
+  if (!options || options.length === 0) return;
+
+  // choose random adjacent face
+  const to = options[Math.floor(Math.random() * options.length)];
+
+  const arrow = arrowFromToShort(from, to);
+
+  console.log(`[SRV] NEW ROUND ${from} → ${to} (${arrow})`);
+
+  // IMPORTANT: clear first
+  await writeLine("CLEAR ALL\n");
+
+  // send new round
+  await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
+  await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+}
+
+
 
   // ── DEFAULT PASSTHROUGH ──────────────────────────────
   const line = raw.endsWith("\n") ? raw : raw + "\n";
@@ -323,8 +417,8 @@ async function handleRoundArrow(line: string) {
   const arrow = arrowFromTo(from, to);
 
   // EXPAND into DRAW SHAPE commands
-  await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE`);
-  await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN`);
+  await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
+  await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
 }
 
 
