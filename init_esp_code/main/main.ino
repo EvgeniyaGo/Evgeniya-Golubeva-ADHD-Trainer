@@ -8,6 +8,7 @@
 #include "types.h"
 #include "display_control.h"
 #include "imu_control.h"
+#include "audio.h"
 
 #define HOLD_TIME_MS 400
 
@@ -248,6 +249,7 @@ void handleCommand(const String &raw) {
 
     if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
         currentTargetFace = face;
+        audio_playEvent(AUDIO_ROUND_START);
     }
 
     return;
@@ -357,6 +359,7 @@ void setup() {
   Serial.println("[ESP] Cube display tester");
 
   // Init subsystems
+  audio_init();
   initDisplay();
   initImu();   // ← must match imu_control.h exactly
 
