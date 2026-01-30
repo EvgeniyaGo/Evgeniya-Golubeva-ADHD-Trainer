@@ -168,6 +168,46 @@ bool arrowFromTo(FaceId from, FaceId to, ShapeId &arrowOut) {
   return false;
 }
 
+// ───────────────────────── Game / Round state ─────────────────────────
+static bool inGame  = false;
+static bool inRound = false;
+
+static void resetGameState() {
+  inGame = false;
+  inRound = false;
+  currentTargetFace = FACE_UNKNOWN; // wait END ROUND"
+  clearAllFaces();
+}
+
+struct RoundConfig {
+  uint32_t durationMs = 0;
+  bool wantLocked = false;
+  bool allowSideChange = false;
+};
+static uint32_t roundStartMs = 0;
+static uint32_t lastDebugPrintMs = 0;
+
+static RoundConfig roundCfg;
+static bool roundBalancing = false;     // ждём lock
+static uint32_t roundBalanceStartMs = 0;
+static FaceId roundLockedFace = FACE_UNKNOWN;
+
+static String kvGet(const String &upperLine, const String &key) {
+  // ищем "KEY=" в строке
+  String pat = key + "=";
+  int p = upperLine.indexOf(pat);
+  if (p < 0) return "";
+  int v0 = p + pat.length();
+  int v1 = upperLine.indexOf(' ', v0);
+  if (v1 < 0) v1 = upperLine.length();
+  return upperLine.substring(v0, v1);
+}
+
+static bool kvBool(const String &v) {
+  return (v == "1" || v == "TRUE" || v == "YES" || v == "ON");
+}
+
+
 
 // ───────────────────────── Command handler ─────────────────────────
 void handleCommand(const String &raw) {
@@ -177,12 +217,72 @@ void handleCommand(const String &raw) {
 
   String upper = line;
   upper.toUpperCase();
+  // GAME START game=SIMONSAYS
+  if (upper.startsWith("GAME START")) {
+    resetGameState();
+    inGame = true;
+    nusSend("OK GAME START\n");
+    return;
+  }
+
+  // GAME END
+  if (upper == "GAME END") {
+    resetGameState();
+    nusSend("OK GAME END\n");
+    return;
+  }
+
+  // ───────────────────────── Aliases for current UI ─────────────────────────
+  // Your UI sends: "GAME 1" / "GAME 0
+  if (upper == "GAME 1") {
+    resetGameState();
+    inGame = true;
+    nusSend("OK GAME START\n");
+    return;
+  }
+  if (upper == "GAME 0") {
+    resetGameState();
+    nusSend("OK GAME END\n");
+    return;
+  }
 
   if (upper.startsWith("CLEAR ALL")) {
     clearAllFaces();
     nusSend("OK CLEAR ALL\n");
     return;
   }
+
+    if (upper.startsWith("ROUND START")) {
+    if (!inGame) { nusSend("ERR NOT_IN_GAME\n"); return; }
+
+    // читаем параметры
+    String durStr = kvGet(upper, "DURATION");
+    if (!durStr.length()) { nusSend("ERR MISSING_DURATION\n"); return; }
+
+    roundCfg.durationMs = (uint32_t)durStr.toInt();
+    roundCfg.wantLocked = kvBool(kvGet(upper, "WANT_LOCKED"));
+    roundCfg.allowSideChange = kvBool(kvGet(upper, "ALLOW_SIDE_CHANGE"));
+
+    // поднимаем round state
+    inRound = true;
+    roundBalancing = true;
+    roundBalanceStartMs = millis();
+    roundLockedFace = FACE_UNKNOWN;
+
+    nusSend("OK ROUND START\n");
+    // сервер дальше сам пришлёт CLEAR/DRAW команды
+    return;
+  }
+
+  // ───────────────────────── ROUND END (optional) ─────────────────────────
+  if (upper.startsWith("ROUND END")) {
+    inRound = false;
+    roundBalancing = false;
+    currentTargetFace = FACE_UNKNOWN;
+    nusSend("OK ROUND END\n");
+    return;
+  }
+
 
   // CLEAR FACE TOP
   if (upper.startsWith("CLEAR FACE")) {
@@ -423,17 +523,43 @@ void loop() {
   updateImu();   // or imu_read(), whichever you already use
 
   ImuState imu = getImuState();
-  uint32_t now = millis();
-  static uint32_t lastPrint = 0;
+uint32_t now = millis();
+// ───────────────────────── Debug state print ─────────────────────────
+if (now - lastDebugPrintMs >= 5000) {   // once per second
+  lastDebugPrintMs = now;
 
-if (now - lastPrint > 300) {  // print ~3x per second
+  uint32_t elapsedSec = 0;
+  uint32_t totalSec   = roundCfg.durationMs / 1000;
+
+  // round is playing ⇔ inRound && !roundBalancing
+  if (inRound && !roundBalancing) {
+    elapsedSec = (now - roundStartMs) / 1000;
+    if (elapsedSec > totalSec) elapsedSec = totalSec;
+  }
+
+  String dbg;
+  dbg.reserve(80);
+  dbg += elapsedSec;
+  dbg += "/";
+  dbg += totalSec;
+  dbg += " sec round have passed; game=";
+  dbg += (inGame ? "1" : "0");
+  dbg += ";round=";
+  dbg += (inRound ? "1" : "0");
+  dbg += ";balancing=";
+  dbg += (roundBalancing ? "1" : "0");
+  dbg += "; \n";
+
+  Serial.print(dbg);
+  nusSend(dbg.c_str());
+
   ImuState imu = getImuState();
   Serial.print("ax=");
   Serial.print(imu.ax);
   Serial.print(" ay=");
   Serial.print(imu.ay);
   Serial.print(" az=");
-  Serial.println(imu.az);
+  Serial.print(imu.az);
 
   Serial.print("[IMU] upFace=");
   Serial.print(faceToString(imu.upFace));
@@ -447,10 +573,36 @@ if (now - lastPrint > 300) {  // print ~3x per second
   Serial.print("  locked=");
   Serial.println(isFaceLocked() ? "Y" : "N");
 
-  lastPrint = now;
-}
+  }
 
   FaceId upFace = imu.upFace;
+  // ───────────────────────── Balancing phase ─────────────────────────
+  if (inRound && roundBalancing) {
+
+    // timeout
+    if (now - roundBalanceStartMs > 30000) {
+      nusSend("ROUND FAIL reason=NO_LOCK\n");
+      inRound = false;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+      return;
+    }
+
+    if (isFaceLocked()) {
+      FaceId locked = imu.upFace;
+      roundLockedFace = locked;
+
+      roundBalancing = false;
+      roundStartMs = millis();
+
+      String msg = "ROUND BALANCE side=";
+      msg += faceToString(locked);
+      msg += "\n";
+      nusSend(msg);
+    }
+
+    return;  
+  }
 
   // Only consider VALID faces
   if (!isValidUpFace()) {
@@ -480,5 +632,4 @@ if (now - lastPrint > 300) {  // print ~3x per second
     currentTargetFace = FACE_UNKNOWN;
   }
 
-  // --- rest of your loop (BLE, display, etc.) ---
 }

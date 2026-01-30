@@ -39,13 +39,32 @@ export default function App() {
   const [avgRttMs, setAvgRttMs] = useState<number | null>(null);
 
   // ─── Manual command state ─────────────────────────────────────────
-  const [command, setCommand] = useState("");
+    const [command, setCommand] = useState("");
+    const RoundPhase = {
+      IDLE: "IDLE",
+      WAIT_BALANCE: "WAIT_BALANCE",
+      PLAYING: "PLAYING",
+    } as const;
+    type RoundPhase = (typeof RoundPhase)[keyof typeof RoundPhase];
+    const [pendingRound, setPendingRound] = useState<{
+      from: FaceId;
+      to: FaceId;
+      arrow: string;
+    } | null>(null);
+
+    const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
+
 
   // refs
   const gattRef = useRef<GattStuff | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
   const writeBusyRef = useRef(false); // NEW: prevent overlapping GATT writes
+  const pendingRoundRef = useRef<{
+    from: FaceId;
+    to: FaceId;
+    arrow: ShapeId;
+  } | null>(null);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => {
@@ -102,14 +121,51 @@ export default function App() {
           text.split(/\r?\n/).forEach((line) => {
             if (!line) return;
 
+    // ───────────────── ROUND BALANCE HANDLER ─────────────────
+    if (line.startsWith("ROUND BALANCE")) {
+      if (!pendingRound) {
+        console.warn("[SRV] BALANCE but no pending round");
+        return;
+      }
+      // Expected: ROUND BALANCE side=TOP
+      const parts = line.split(/\s+/);
+      const sidePart = parts.find(p => p.startsWith("side="));
+      if (!sidePart) {
+        console.error("[SRV] BALANCE without side");
+        return;
+      }
+
+      const balancedFace = sidePart.split("=")[1] as FaceId;
+      const { from, to, arrow } = pendingRound;
+
+      console.log(
+        `[SRV] BALANCED on ${balancedFace}, drawing ${from} → ${to} (${arrow})`
+      );
+
+      writeLine("CLEAR ALL\n");
+      writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
+      writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+
+      setPendingRound(null);
+      return;
+    }
+
+
+          
             // Handle PONG <seq> for packet test
             if (line.startsWith("END ROUND")) {
+              if (roundPhase !== RoundPhase.PLAYING) {
+                console.warn("[SRV] Ignoring END ROUND (not playing yet)");
+                return;
+              }
+
               const parts = line.trim().split(/\s+/);
               if (parts.length !== 3) return;
 
-              const from = parts[2] as FaceId; // "TOP", "LEFT", ...
+              const from = parts[2] as FaceId;
               console.log(`[SRV] END ROUND ${from}`);
 
+              setRoundPhase(RoundPhase.IDLE);
               handleEndRound(from);
               return;
             }
@@ -243,9 +299,17 @@ const handleEndRound = useCallback(
 
     console.log(`[SRV] AUTO NEW ROUND ${from} → ${to} (${arrow})`);
 
-    await writeLine("CLEAR ALL\n");
-    await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
-    await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+    console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
+
+    // Store intent, DO NOT DRAW YET
+    const round = { from, to, arrow };
+    pendingRoundRef.current = round;
+    setPendingRound(round);
+
+    // Ask ESP to start balancing for next round
+    await writeLine(
+      "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+    );
   },
   [writeLine, arrowFromToShort]
 );
@@ -257,6 +321,8 @@ const sendCommand = useCallback(async () => {
   if (!raw) return;
 
   const upper = raw.toUpperCase();
+
+
 
   // ── INTERCEPT SEMANTIC ARROW ─────────────────────────
   // Expected:
@@ -282,9 +348,17 @@ const sendCommand = useCallback(async () => {
     const arrow = arrowFromTo(from, to);
 
     // Send ONLY explicit commands to ESP
-    await writeLine("CLEAR ALL\n");
-    await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
-    await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+      console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
+
+      // Store intent, DO NOT DRAW YET
+      const round = { from, to, arrow };
+      pendingRoundRef.current = round;
+      setPendingRound(round);
+
+      // Ask ESP to start balancing for next round
+      await writeLine(
+        "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+      );
 
     pushLog(`[SRV] DRAW ARROW ${from} → ${to} (${arrow})`);
     setCommand("");
