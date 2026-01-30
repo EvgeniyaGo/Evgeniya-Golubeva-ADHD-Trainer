@@ -207,6 +207,8 @@ static bool kvBool(const String &v) {
   return (v == "1" || v == "TRUE" || v == "YES" || v == "ON");
 }
 
+FaceId startFace = FACE_UNKNOWN;
+bool hasLeftStartFace = false;
 
 
 // ───────────────────────── Command handler ─────────────────────────
@@ -524,6 +526,8 @@ void loop() {
 
   ImuState imu = getImuState();
 uint32_t now = millis();
+const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
+
 // ───────────────────────── Debug state print ─────────────────────────
 if (now - lastDebugPrintMs >= 5000) {   // once per second
   lastDebugPrintMs = now;
@@ -594,6 +598,8 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
 
       roundBalancing = false;
       roundStartMs = millis();
+      startFace = locked;
+      hasLeftStartFace = false;
 
       String msg = "ROUND BALANCE side=";
       msg += faceToString(locked);
@@ -617,19 +623,63 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
     upFaceSince = now;
   }
 
-  // Check round completion
-  if (currentTargetFace != FACE_UNKNOWN &&
-      upFace == currentTargetFace &&
-      (now - upFaceSince) >= HOLD_TIME_MS) {
-
-    String msg = "END ROUND ";
-    msg += faceToString(upFace);  // MUST output TOP / LEFT / etc
-    msg += "\n";
-
-    nusSend(msg.c_str());
-
-    // Disarm until next round
-    currentTargetFace = FACE_UNKNOWN;
+  if (!hasLeftStartFace && upFace != startFace) {
+    hasLeftStartFace = true;
   }
 
+  // Check round completion
+if (currentTargetFace != FACE_UNKNOWN &&
+    !roundBalancing &&
+    (now - roundStartMs) > roundCfg.durationMs) {
+
+  uint32_t elapsed = now - roundStartMs;
+
+  String msg = "END ROUND result=FAIL face=";
+  msg += faceToString(upFace);
+  msg += " time=";
+  msg += elapsed;
+  msg += " reason=TIMEOUT\n";
+
+  nusSend(msg.c_str());
+
+  currentTargetFace = FACE_UNKNOWN;
+  return;
+}
+
+if (currentTargetFace != FACE_UNKNOWN &&
+    hasLeftStartFace &&
+    upFace != currentTargetFace &&
+    (now - upFaceSince) >= HOLD_TIME_MS) {
+
+  uint32_t elapsed = now - roundStartMs;
+
+  String msg = "END ROUND result=FAIL face=";
+  msg += faceToString(upFace);
+  msg += " time=";
+  msg += elapsed;
+  msg += " reason=WRONG_FACE\n";
+
+  nusSend(msg.c_str());
+
+  currentTargetFace = FACE_UNKNOWN;
+  return;
+}
+
+if (currentTargetFace != FACE_UNKNOWN &&
+    upFace == currentTargetFace &&
+    (now - upFaceSince) >= HOLD_TIME_MS) {
+
+  uint32_t elapsed = now - roundStartMs;
+
+  String msg = "END ROUND result=SUCCESS face=";
+  msg += faceToString(upFace);
+  msg += " time=";
+  msg += elapsed;
+  msg += "\n";
+
+  nusSend(msg.c_str());
+
+  currentTargetFace = FACE_UNKNOWN;
+  return;
+}
 }

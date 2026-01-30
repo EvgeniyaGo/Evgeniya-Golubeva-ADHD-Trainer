@@ -70,6 +70,13 @@ export default function App() {
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
 
+  type EndRoundFailData = {
+  face: FaceId;
+  time?: number;
+  reason?: string;
+};
+
+
   const pushLog = useCallback((line: string) => {
     setLog((prev) => {
       const next = [...prev, `[${new Date().toLocaleTimeString()}] ${line}`];
@@ -161,18 +168,29 @@ export default function App() {
 
             // ───────────────── END ROUND ─────────────────
             if (line.startsWith("END ROUND")) {
-              if (roundPhaseRef.current !== RoundPhase.PLAYING) {
-                console.warn("[SRV] Ignoring END ROUND (not playing yet)");
-                return;
+              const data = parseEndRound(line);
+              if (!data) {
+                console.warn("[SRV] Bad END ROUND format");
+                continue;
               }
 
-              const parts = line.trim().split(/\s+/);
-              if (parts.length !== 3) continue;
+              if (roundPhaseRef.current !== RoundPhase.PLAYING) {
+                console.warn("[SRV] Ignoring END ROUND (not playing yet)");
+                continue;
+              }
 
-              const from = parts[2] as FaceId;
-              console.log(`[SRV] END ROUND ${from}`);
+              if (data.result === "SUCCESS") {
+                console.log(
+                  `[SRV] ROUND SUCCESS face=${data.face} time=${data.time}`
+                );
+                await handleEndRound(data.face);
+              } else {
+                console.log(
+                  `[SRV] ROUND FAIL face=${data.face} reason=${data.reason}`
+                );
+                await handleRoundFail(data);
+              }
 
-              handleEndRound(from);
               continue;
             }
 
@@ -492,6 +510,94 @@ export default function App() {
 
     throw new Error(`Unreachable arrow ${from} → ${to}`);
   }
+
+function parseEndRound(line: string): {
+  result: "SUCCESS" | "FAIL";
+  face: FaceId;
+  time?: number;
+  reason?: string;
+} | null {
+  const parts = line.split(/\s+/);
+
+  // Legacy: END ROUND RIGHT
+  if (parts.length === 3) {
+    return {
+      result: "SUCCESS",
+      face: parts[2] as FaceId,
+    };
+  }
+
+  // New: key=value format
+  const params: Record<string, string> = {};
+  for (const p of parts.slice(2)) {
+    const [k, v] = p.split("=");
+    if (k && v) params[k] = v;
+  }
+
+  if (!params.face || !params.result) return null;
+
+  return {
+    result: params.result as "SUCCESS" | "FAIL",
+    face: params.face as FaceId,
+    time: params.time ? Number(params.time) : undefined,
+    reason: params.reason,
+  };
+}
+
+const handleRoundFail = useCallback(
+  async (data: EndRoundFailData) => {
+    console.log(
+      `[SRV] HANDLE FAIL face=${data.face} time=${data.time} reason=${data.reason}`
+    );
+
+    // Consume one round
+    remainingRoundsRef.current -= 1;
+
+    if (remainingRoundsRef.current <= 0) {
+      console.log("[SRV] Game finished (after FAIL)");
+      roundPhaseRef.current = RoundPhase.IDLE;
+      setRoundPhase(RoundPhase.IDLE);
+      pendingRoundRef.current = null;
+      setPendingRound(null);
+      return;
+    }
+
+    // Choose next round (same logic as SUCCESS)
+    const options = adjacency[data.face];
+    if (!options || options.length === 0) {
+      console.warn("[SRV] No adjacency options for", data.face);
+      roundPhaseRef.current = RoundPhase.IDLE;
+      setRoundPhase(RoundPhase.IDLE);
+      return;
+    }
+
+    const to = options[Math.floor(Math.random() * options.length)];
+    const arrow = arrowFromToShort(data.face, to);
+
+    const nextRound = {
+      from: data.face,
+      to,
+      arrow,
+    };
+
+    console.log(
+      `[SRV] NEXT ROUND (after FAIL) ${data.face} → ${to} (${arrow}), remaining=${remainingRoundsRef.current}`
+    );
+
+    // Register next round
+    pendingRoundRef.current = nextRound;
+    setPendingRound(nextRound);
+
+    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+    setRoundPhase(RoundPhase.WAIT_BALANCE);
+
+    // Ask ESP to start balancing again
+    await writeLine(
+      `ROUND START type=ARROW from=${data.face} to=${to} duration=800 remaining=${remainingRoundsRef.current}\n`
+    );
+  },
+  [writeLine, arrowFromToShort]
+);
 
   async function handleRoundArrow(line: string) {
     const parts = line.split(/\s+/);
