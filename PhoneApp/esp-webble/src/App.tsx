@@ -39,20 +39,21 @@ export default function App() {
   const [avgRttMs, setAvgRttMs] = useState<number | null>(null);
 
   // ─── Manual command state ─────────────────────────────────────────
-    const [command, setCommand] = useState("");
-    const RoundPhase = {
-      IDLE: "IDLE",
-      WAIT_BALANCE: "WAIT_BALANCE",
-      PLAYING: "PLAYING",
-    } as const;
-    type RoundPhase = (typeof RoundPhase)[keyof typeof RoundPhase];
-    const [pendingRound, setPendingRound] = useState<{
-      from: FaceId;
-      to: FaceId;
-      arrow: string;
-    } | null>(null);
+  const [command, setCommand] = useState("");
+  const RoundPhase = {
+    IDLE: "IDLE",
+    WAIT_BALANCE: "WAIT_BALANCE",
+    PLAYING: "PLAYING",
+  } as const;
+  type RoundPhase = (typeof RoundPhase)[keyof typeof RoundPhase];
+  const [pendingRound, setPendingRound] = useState<{
+    from: FaceId;
+    to: FaceId;
+    arrow: string;
+  } | null>(null);
+const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-    const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
+  const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
 
 
   // refs
@@ -60,11 +61,13 @@ export default function App() {
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
   const writeBusyRef = useRef(false); // NEW: prevent overlapping GATT writes
-  const pendingRoundRef = useRef<{
+  type PendingRound = {
     from: FaceId;
     to: FaceId;
     arrow: ShapeId;
-  } | null>(null);
+  };
+
+  const pendingRoundRef = useRef<PendingRound | null>(null);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => {
@@ -109,7 +112,7 @@ export default function App() {
 
       // Subscribe to notifications from ESP (NUS TX)
       await tx.startNotifications();
-      tx.addEventListener("characteristicvaluechanged", (ev: Event) => {
+      tx.addEventListener("characteristicvaluechanged", async (ev: Event) => {
         const dv = (ev.target as BluetoothRemoteGATTCharacteristic).value!;
         try {
           // Safer decode (respect byteOffset/byteLength)
@@ -117,81 +120,85 @@ export default function App() {
           const text = new TextDecoder().decode(bytes).trimEnd();
           pushLog(`[ESP →] ${text}`);
 
-          // Split just in case multiple lines come in one notification
-          text.split(/\r?\n/).forEach((line) => {
-            if (!line) return;
 
-    // ───────────────── ROUND BALANCE HANDLER ─────────────────
-    if (line.startsWith("ROUND BALANCE")) {
-      if (!pendingRound) {
-        console.warn("[SRV] BALANCE but no pending round");
-        return;
-      }
-      // Expected: ROUND BALANCE side=TOP
-      const parts = line.split(/\s+/);
-      const sidePart = parts.find(p => p.startsWith("side="));
-      if (!sidePart) {
-        console.error("[SRV] BALANCE without side");
-        return;
-      }
 
-      const balancedFace = sidePart.split("=")[1] as FaceId;
-      const { from, to, arrow } = pendingRound;
+// Split just in case multiple lines come in one notification
+for (const line of text.split(/\r?\n/)) {
+  if (!line) continue;
 
-      console.log(
-        `[SRV] BALANCED on ${balancedFace}, drawing ${from} → ${to} (${arrow})`
-      );
-
-      writeLine("CLEAR ALL\n");
-      writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
-      writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
-
-      setPendingRound(null);
-      return;
+  // ───────────────── ROUND BALANCE ─────────────────
+  if (line.startsWith("ROUND BALANCE")) {
+    const round = pendingRoundRef.current;
+    if (!round) {
+      console.warn("[SRV] BALANCE but no pending round");
+      continue;
     }
 
+    const parts = line.split(/\s+/);
+    const sidePart = parts.find(p =>
+      p.toLowerCase().startsWith("side=")
+    );
+    if (!sidePart) continue;
 
-          
-            // Handle PONG <seq> for packet test
-            if (line.startsWith("END ROUND")) {
-              if (roundPhase !== RoundPhase.PLAYING) {
-                console.warn("[SRV] Ignoring END ROUND (not playing yet)");
-                return;
-              }
+    const balancedFace = sidePart.split("=")[1] as FaceId;
+    const { to, arrow } = round;
 
-              const parts = line.trim().split(/\s+/);
-              if (parts.length !== 3) return;
+    console.log(
+      `[SRV] BALANCED on ${balancedFace}, drawing ${round.from} → ${to} (${arrow})`
+    );
 
-              const from = parts[2] as FaceId;
-              console.log(`[SRV] END ROUND ${from}`);
+    await writeLine("CLEAR ALL\n");
+    await writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
+    await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
 
-              setRoundPhase(RoundPhase.IDLE);
-              handleEndRound(from);
-              return;
-            }
+    pendingRoundRef.current = null;
+    setPendingRound(null);
+    continue;
+  }
 
-            if (line.startsWith("PONG ")) {
-              const seqStr = line.substring(5).trim();
-              const seq = Number(seqStr);
-              if (!Number.isNaN(seq)) {
-                const sentAt = pendingRef.current.get(seq);
-                if (sentAt != null) {
-                  const rtt = performance.now() - sentAt;
-                  pendingRef.current.delete(seq);
+  // ───────────────── END ROUND ─────────────────
+  if (line.startsWith("END ROUND")) {
+    if (roundPhase !== RoundPhase.PLAYING) {
+      console.warn("[SRV] Ignoring END ROUND (not playing yet)");
+      continue;
+    }
 
-                  setRecvCount((prevRecv) => {
-                    const newRecv = prevRecv + 1;
-                    setAvgRttMs((prevAvg) =>
-                      prevAvg == null
-                        ? rtt
-                        : prevAvg + (rtt - prevAvg) / newRecv
-                    );
-                    return newRecv;
-                  });
-                }
-              }
-            }
-          });
+    const parts = line.trim().split(/\s+/);
+    if (parts.length !== 3) continue;
+
+    const from = parts[2] as FaceId;
+    console.log(`[SRV] END ROUND ${from}`);
+
+    setRoundPhase(RoundPhase.IDLE);
+    handleEndRound(from);
+    continue;
+  }
+
+  // ───────────────── PONG ─────────────────
+  if (line.startsWith("PONG ")) {
+    const seqStr = line.substring(5).trim();
+    const seq = Number(seqStr);
+    if (!Number.isNaN(seq)) {
+      const sentAt = pendingRef.current.get(seq);
+      if (sentAt != null) {
+        const rtt = performance.now() - sentAt;
+        pendingRef.current.delete(seq);
+
+        setRecvCount(prevRecv => {
+          const newRecv = prevRecv + 1;
+          setAvgRttMs(prevAvg =>
+            prevAvg == null
+              ? rtt
+              : prevAvg + (rtt - prevAvg) / newRecv
+          );
+          return newRecv;
+        });
+      }
+    }
+  }
+}
+
+
         } catch {
           const hex = Array.from(
             new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)
@@ -228,45 +235,35 @@ export default function App() {
 
   // Write helper (handles writeWith/WithoutResponse differences)
   // Returns true if the write actually happened, false on failure / busy
-  const writeLine = useCallback(
-    async (line: string): Promise<boolean> => {
-      const g = gattRef.current;
-      if (!g) {
-        pushLog("Write failed: not connected");
-        return false;
-      }
+const writeLine = useCallback((line: string): Promise<void> => {
+  const g = gattRef.current;
+  if (!g) {
+    pushLog("Write failed: not connected");
+    return Promise.resolve();
+  }
 
-      if (writeBusyRef.current) {
-        // Optionally log, but it can get noisy:
-        // pushLog("[WARN] Skipping send, GATT busy");
-        return false;
-      }
+  const data = new TextEncoder().encode(line);
 
-      const data = new TextEncoder().encode(line);
+  writeQueueRef.current = writeQueueRef.current.then(async () => {
+    try {
       const rx: any = g.rx;
 
-      writeBusyRef.current = true;
-      try {
-        if (typeof rx.writeValueWithoutResponse === "function") {
-          await rx.writeValueWithoutResponse(data);
-        } else if (typeof rx.writeValueWithResponse === "function") {
-          await rx.writeValueWithResponse(data);
-        } else if (typeof rx.writeValue === "function") {
-          await rx.writeValue(data);
-        } else {
-          throw new Error("Characteristic is not writable.");
-        }
-        pushLog(`[→ ESP] ${JSON.stringify(line.trimEnd())}`);
-        return true;
-      } catch (e: any) {
-        pushLog(`[ERR] ${e?.message || e}`);
-        return false;
-      } finally {
-        writeBusyRef.current = false;
+      if (typeof rx.writeValueWithoutResponse === "function") {
+        await rx.writeValueWithoutResponse(data);
+      } else if (typeof rx.writeValueWithResponse === "function") {
+        await rx.writeValueWithResponse(data);
+      } else {
+        await rx.writeValue(data);
       }
-    },
-    [pushLog]
-  );
+
+      pushLog(`[→ ESP] ${JSON.stringify(line.trimEnd())}`);
+    } catch (e: any) {
+      pushLog(`[ERR] ${e?.message || e}`);
+    }
+  });
+
+  return writeQueueRef.current;
+}, [pushLog]);
 
   const toggleMovement = useCallback(async () => {
     const next = !moving;
@@ -275,79 +272,117 @@ export default function App() {
   }, [moving, writeLine]);
 
   const adjacency: Record<FaceId, FaceId[]> = {
-  TOP:    ["FRONT", "BACK", "LEFT", "RIGHT"],
-  BOTTOM: ["FRONT", "BACK", "LEFT", "RIGHT"],
-  LEFT:   ["TOP", "BOTTOM", "FRONT", "BACK"],
-  RIGHT:  ["TOP", "BOTTOM", "FRONT", "BACK"],
-  FRONT:  ["TOP", "BOTTOM", "LEFT", "RIGHT"],
-  BACK:   ["TOP", "BOTTOM", "LEFT", "RIGHT"],
-};
+    TOP: ["FRONT", "BACK", "LEFT", "RIGHT"],
+    BOTTOM: ["FRONT", "BACK", "LEFT", "RIGHT"],
+    LEFT: ["TOP", "BOTTOM", "FRONT", "BACK"],
+    RIGHT: ["TOP", "BOTTOM", "FRONT", "BACK"],
+    FRONT: ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+    BACK: ["TOP", "BOTTOM", "LEFT", "RIGHT"],
+  };
 
-const arrowFromToShort = useCallback((from: FaceId, to: FaceId): ShapeId => {
-  return arrowFromTo(from, to);
-}, []);
+  const arrowFromToShort = useCallback((from: FaceId, to: FaceId): ShapeId => {
+    return arrowFromTo(from, to);
+  }, []);
 
-const handleEndRound = useCallback(
-  async (from: FaceId) => {
-    const options = adjacency[from];
-    if (!options || options.length === 0) return;
+  const handleEndRound = useCallback(
+    async (from: FaceId) => {
 
-    // choose random adjacent face
-    const to = options[Math.floor(Math.random() * options.length)];
+      const options = adjacency[from];
+      if (!options || options.length === 0) return;
 
-    const arrow = arrowFromToShort(from, to);
+      // choose random adjacent face
+      const to = options[Math.floor(Math.random() * options.length)];
 
-    console.log(`[SRV] AUTO NEW ROUND ${from} → ${to} (${arrow})`);
+      const arrow = arrowFromToShort(from, to);
 
-    console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
+      console.log(`[SRV] AUTO NEW ROUND ${from} → ${to} (${arrow})`);
 
-    // Store intent, DO NOT DRAW YET
-    const round = { from, to, arrow };
-    pendingRoundRef.current = round;
-    setPendingRound(round);
+      console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
 
-    // Ask ESP to start balancing for next round
-    await writeLine(
-      "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
-    );
-  },
-  [writeLine, arrowFromToShort]
-);
+      // Store intent, DO NOT DRAW YET
+      const round = { from, to, arrow };
+      pendingRoundRef.current = round;
+      setPendingRound(round);
+
+      // Ask ESP to start balancing for next round
+      await writeLine(
+        "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+      );
+    },
+    [writeLine, arrowFromToShort]
+  );
 
 
   // ─── Manual command sender ──────────────────────────────────────
-const sendCommand = useCallback(async () => {
-  const raw = command.trim();
-  if (!raw) return;
+  const sendCommand = useCallback(async () => {
+    const raw = command.trim();
+    if (!raw) return;
 
-  const upper = raw.toUpperCase();
+    const upper = raw.toUpperCase();
 
 
 
-  // ── INTERCEPT SEMANTIC ARROW ─────────────────────────
-  // Expected:
-  // DRAW ARROW FACE_TOP FACE_LEFT
-  if (upper.startsWith("ROUND ARROW")) {
-    // DO NOT send to ESP
-    await handleRoundArrow(upper);
-    setCommand("");
-    return;
-  }
-
-  if (upper.startsWith("DRAW ARROW")) {
-    const parts = upper.split(/\s+/);
-
-    if (parts.length !== 4) {
-      pushLog("[ERR] Bad DRAW ARROW format");
+    // ── INTERCEPT SEMANTIC ARROW ─────────────────────────
+    // Expected:
+    // DRAW ARROW FACE_TOP FACE_LEFT
+    if (upper.startsWith("ROUND ARROW")) {
+      // DO NOT send to ESP
+      await handleRoundArrow(upper);
+      setCommand("");
       return;
     }
 
-    const from = parts[2] as FaceId;
-    const to   = parts[3] as FaceId;
+    // ── INTERCEPT ROUND START (AUTHORITATIVE) ───────────
+    if (upper.startsWith("ROUND START")) {
+      // Parse key=value params
+      const params = Object.fromEntries(
+        upper
+          .split(/\s+/)
+          .slice(2)
+          .map(p => {
+            const [k, v] = p.split("=");
+            return [k.toLowerCase(), v];
+          })
+      );
+      console.log("[DBG] params =", params);
 
-    const arrow = arrowFromTo(from, to);
+      if (params.type === "ARROW" && params.from && params.to) {
+        const from = params.from as FaceId;
+        const to = params.to as FaceId;
+        const arrow = arrowFromTo(from, to);
 
-    // Send ONLY explicit commands to ESP
+        const round = { from, to, arrow };
+
+        pendingRoundRef.current = round;
+        setPendingRound(round);
+        setRoundPhase(RoundPhase.WAIT_BALANCE);
+
+        console.log(`[SRV] ROUND START ${from} → ${to} (${arrow})`);
+
+      }
+
+      // Pass command to ESP unchanged
+      const line = raw.endsWith("\n") ? raw : raw + "\n";
+      await writeLine(line);
+      setCommand("");
+      return;
+    }
+
+
+    if (upper.startsWith("DRAW ARROW")) {
+      const parts = upper.split(/\s+/);
+
+      if (parts.length !== 4) {
+        pushLog("[ERR] Bad DRAW ARROW format");
+        return;
+      }
+
+      const from = parts[2] as FaceId;
+      const to = parts[3] as FaceId;
+
+      const arrow = arrowFromTo(from, to);
+
+      // Send ONLY explicit commands to ESP
       console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
 
       // Store intent, DO NOT DRAW YET
@@ -360,98 +395,105 @@ const sendCommand = useCallback(async () => {
         "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
       );
 
-    pushLog(`[SRV] DRAW ARROW ${from} → ${to} (${arrow})`);
+      pushLog(`[SRV] DRAW ARROW ${from} → ${to} (${arrow})`);
+      setCommand("");
+      return;
+    }
+
+
+    // ── DEFAULT PASSTHROUGH ──────────────────────────────
+    const line = raw.endsWith("\n") ? raw : raw + "\n";
+    await writeLine(line);
     setCommand("");
-    return;
+  }, [command, writeLine, pushLog]);
+
+
+  // ----- Calculating faces for arrows
+  type FaceId =
+    | "TOP"
+    | "BOTTOM"
+    | "LEFT"
+    | "RIGHT"
+    | "FRONT"
+    | "BACK";
+
+  type ShapeId =
+    | "SHAPE_ARROW_UP"
+    | "SHAPE_ARROW_DOWN"
+    | "SHAPE_ARROW_LEFT"
+    | "SHAPE_ARROW_RIGHT"
+    | "SHAPE_CIRCLE_6X6";
+  type Vec3 = { x: number; y: number; z: number };
+
+  function faceNormal(f: FaceId): Vec3 {
+    switch (f) {
+      case "TOP": return { x: 0, y: 0, z: 1 };
+      case "BOTTOM": return { x: 0, y: 0, z: -1 };
+      case "FRONT": return { x: 0, y: 1, z: 0 };
+      case "BACK": return { x: 0, y: -1, z: 0 };
+      case "RIGHT": return { x: 1, y: 0, z: 0 };
+      case "LEFT": return { x: -1, y: 0, z: 0 };
+    }
   }
 
-
-  // ── DEFAULT PASSTHROUGH ──────────────────────────────
-  const line = raw.endsWith("\n") ? raw : raw + "\n";
-  await writeLine(line);
-  setCommand("");
-}, [command, writeLine, pushLog]);
-
-
-// ----- Calculating faces for arrows
-type FaceId =
-  | "TOP"
-  | "BOTTOM"
-  | "LEFT"
-  | "RIGHT"
-  | "FRONT"
-  | "BACK";
-
-type ShapeId =
-  | "SHAPE_ARROW_UP"
-  | "SHAPE_ARROW_DOWN"
-  | "SHAPE_ARROW_LEFT"
-  | "SHAPE_ARROW_RIGHT"
-  | "SHAPE_CIRCLE_6X6";
-type Vec3 = { x: number; y: number; z: number };
-
-function faceNormal(f: FaceId): Vec3 {
-  switch (f) {
-    case "TOP":    return { x: 0,  y: 0,  z: 1 };
-    case "BOTTOM": return { x: 0,  y: 0,  z: -1 };
-    case "FRONT":  return { x: 0,  y: 1,  z: 0 };
-    case "BACK":   return { x: 0,  y: -1, z: 0 };
-    case "RIGHT":  return { x: 1,  y: 0,  z: 0 };
-    case "LEFT":   return { x: -1, y: 0,  z: 0 };
+  function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
+    switch (f) {
+      case "TOP":
+        return { up: { x: 0, y: -1, z: 0 }, right: { x: 1, y: 0, z: 0 } };
+      case "BOTTOM":
+        return { up: { x: 0, y: -1, z: 0 }, right: { x: -1, y: 0, z: 0 } };
+      case "FRONT":
+        return { up: { x: 0, y: 0, z: 1 }, right: { x: 1, y: 0, z: 0 } };
+      case "BACK":
+        return { up: { x: 0, y: 0, z: 1 }, right: { x: -1, y: 0, z: 0 } };
+      case "RIGHT":
+        return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: -1, z: 0 } };
+      case "LEFT":
+        return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: 1, z: 0 } };
+    }
   }
-}
+  function arrowFromTo(from: FaceId, to: FaceId): ShapeId {
+    const n = faceNormal(to);
+    const { up, right } = faceBasis(from);
 
-function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
-  switch (f) {
-    case "TOP":
-      return { up: { x: 0, y: -1, z: 0 }, right: { x: 1, y: 0, z: 0 } };
-    case "BOTTOM":
-      return { up: { x: 0, y: -1, z: 0 }, right: { x: -1, y: 0, z: 0 } };
-    case "FRONT":
-      return { up: { x: 0, y: 0, z: 1 }, right: { x: 1, y: 0, z: 0 } };
-    case "BACK":
-      return { up: { x: 0, y: 0, z: 1 }, right: { x: -1, y: 0, z: 0 } };
-    case "RIGHT":
-      return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: -1, z: 0 } };
-    case "LEFT":
-      return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: 1, z: 0 } };
-  }
-}
-function arrowFromTo(from: FaceId, to: FaceId): ShapeId {
-  const n = faceNormal(to);
-  const { up, right } = faceBasis(from);
+    const du = n.x * up.x + n.y * up.y + n.z * up.z;
+    const dr = n.x * right.x + n.y * right.y + n.z * right.z;
 
-  const du = n.x * up.x + n.y * up.y + n.z * up.z;
-  const dr = n.x * right.x + n.y * right.y + n.z * right.z;
+    if (du === 1) return "SHAPE_ARROW_UP";
+    if (du === -1) return "SHAPE_ARROW_DOWN";
+    if (dr === 1) return "SHAPE_ARROW_RIGHT";
+    if (dr === -1) return "SHAPE_ARROW_LEFT";
 
-  if (du === 1)  return "SHAPE_ARROW_UP";
-  if (du === -1) return "SHAPE_ARROW_DOWN";
-  if (dr === 1)  return "SHAPE_ARROW_RIGHT";
-  if (dr === -1) return "SHAPE_ARROW_LEFT";
-
-  throw new Error(`Unreachable arrow ${from} → ${to}`);
-}
-
-async function handleRoundArrow(line: string) {
-  const parts = line.split(/\s+/);
-
-  // Expected:
-  // ROUND ARROW FACE_TOP FACE_LEFT
-  if (parts.length !== 4) {
-    console.error("Bad ROUND ARROW format");
-    return;
+    throw new Error(`Unreachable arrow ${from} → ${to}`);
   }
 
-  const from = parts[2] as FaceId;
-  const to   = parts[3] as FaceId;
+  async function handleRoundArrow(line: string) {
+    const parts = line.split(/\s+/);
 
-  const arrow = arrowFromTo(from, to);
+    if (parts.length !== 4) {
+      console.error("Bad ROUND ARROW format");
+      return;
+    }
 
-  // EXPAND into DRAW SHAPE commands
-  await writeLine(`DRAW SHAPE ${from} ${arrow} COLOR_BLUE\n`);
-  await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
-}
+    const from = parts[2] as FaceId;
+    const to = parts[3] as FaceId;
 
+    const arrow = arrowFromTo(from, to);
+
+    const round = { from, to, arrow };
+
+    // 🔑 REGISTER ROUND (THIS WAS MISSING)
+    pendingRoundRef.current = round;
+    setPendingRound(round);
+    setRoundPhase(RoundPhase.WAIT_BALANCE);
+
+    // Tell ESP to start balancing
+    await writeLine(
+      "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+    );
+
+    console.log(`[SRV] MANUAL ROUND START ${from} → ${to} (${arrow})`);
+  }
 
   // ─── Packet test: send PING <seq>\n periodically while running ───
   useEffect(() => {
@@ -469,8 +511,7 @@ async function handleRoundArrow(line: string) {
         const line = `PING ${seq}\n`;
 
         (async () => {
-          const ok = await writeLine(line);
-          if (!ok) return; // don't count / track failed writes
+          await writeLine(line);
 
           pendingRef.current.set(seq, performance.now());
           setSentCount((c) => c + 1);
@@ -503,10 +544,10 @@ async function handleRoundArrow(line: string) {
     status === "connecting"
       ? "CONNECTING…"
       : isConnected
-      ? "CONNECTED"
-      : status === "disconnected"
-      ? "DISCONNECTED"
-      : "NOT CONNECTED";
+        ? "CONNECTED"
+        : status === "disconnected"
+          ? "DISCONNECTED"
+          : "NOT CONNECTED";
 
   // helper: restart ping both on app + ESP
   const restartPingAll = useCallback(() => {
@@ -738,42 +779,42 @@ async function handleRoundArrow(line: string) {
                 </button>
 
                 <button
-                className="btn btn-neutral"
-                onClick={() => writeLine(CMD_BEEP1)}
-                disabled={!isConnected}
-                title="Play 880 Hz beep"
-              >
-                Beep 1
-              </button>
+                  className="btn btn-neutral"
+                  onClick={() => writeLine(CMD_BEEP1)}
+                  disabled={!isConnected}
+                  title="Play 880 Hz beep"
+                >
+                  Beep 1
+                </button>
 
-              <button
-                className="btn btn-neutral"
-                onClick={() => writeLine(CMD_BEEP2)}
-                disabled={!isConnected}
-                title="Play 1760 Hz beep"
-              >
-                Beep 2
-              </button>
+                <button
+                  className="btn btn-neutral"
+                  onClick={() => writeLine(CMD_BEEP2)}
+                  disabled={!isConnected}
+                  title="Play 1760 Hz beep"
+                >
+                  Beep 2
+                </button>
                 <br></br>
-              <button
-                className="btn btn-neutral"
-                disabled={!isConnected}
-                onClick={() => {
-                  const next = !gameOn;
-                  setGameOn(next);
-                  writeLine(`GAME ${next ? 1 : 0}`);
-                }}
-              >
-                {gameOn ? "Stop game" : "Start game"}
-              </button>
+                <button
+                  className="btn btn-neutral"
+                  disabled={!isConnected}
+                  onClick={() => {
+                    const next = !gameOn;
+                    setGameOn(next);
+                    writeLine(`GAME ${next ? 1 : 0}`);
+                  }}
+                >
+                  {gameOn ? "Stop game" : "Start game"}
+                </button>
 
-              <button
-                className="btn btn-neutral"
-                disabled={!isConnected || !gameOn}
-                onClick={() => writeLine("NEW_FACE")}
-              >
-                New face
-              </button>
+                <button
+                  className="btn btn-neutral"
+                  disabled={!isConnected || !gameOn}
+                  onClick={() => writeLine("NEW_FACE")}
+                >
+                  New face
+                </button>
 
               </div>
 
