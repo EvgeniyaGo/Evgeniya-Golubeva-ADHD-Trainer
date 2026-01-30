@@ -51,7 +51,7 @@ export default function App() {
     to: FaceId;
     arrow: string;
   } | null>(null);
-const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
 
@@ -66,8 +66,9 @@ const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
     to: FaceId;
     arrow: ShapeId;
   };
-
+  const remainingRoundsRef = useRef<number>(0);
   const pendingRoundRef = useRef<PendingRound | null>(null);
+  const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
 
   const pushLog = useCallback((line: string) => {
     setLog((prev) => {
@@ -122,81 +123,82 @@ const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
 
 
-// Split just in case multiple lines come in one notification
-for (const line of text.split(/\r?\n/)) {
-  if (!line) continue;
+          // Split just in case multiple lines come in one notification
+          for (const line of text.split(/\r?\n/)) {
+            if (!line) continue;
 
-  // ───────────────── ROUND BALANCE ─────────────────
-  if (line.startsWith("ROUND BALANCE")) {
-    const round = pendingRoundRef.current;
-    if (!round) {
-      console.warn("[SRV] BALANCE but no pending round");
-      continue;
-    }
+            // ───────────────── ROUND BALANCE ─────────────────
+            if (line.startsWith("ROUND BALANCE")) {
+              const round = pendingRoundRef.current;
+              if (!round) {
+                console.warn("[SRV] BALANCE but no pending round");
+                continue;
+              }
+              setRoundPhase(RoundPhase.PLAYING);
+              roundPhaseRef.current = RoundPhase.PLAYING;
 
-    const parts = line.split(/\s+/);
-    const sidePart = parts.find(p =>
-      p.toLowerCase().startsWith("side=")
-    );
-    if (!sidePart) continue;
+              const parts = line.split(/\s+/);
+              const sidePart = parts.find(p =>
+                p.toLowerCase().startsWith("side=")
+              );
+              if (!sidePart) continue;
 
-    const balancedFace = sidePart.split("=")[1] as FaceId;
-    const { to, arrow } = round;
+              const balancedFace = sidePart.split("=")[1] as FaceId;
+              const { to, arrow } = round;
 
-    console.log(
-      `[SRV] BALANCED on ${balancedFace}, drawing ${round.from} → ${to} (${arrow})`
-    );
+              console.log(
+                `[SRV] BALANCED on ${balancedFace}, drawing ${round.from} → ${to} (${arrow})`
+              );
 
-    await writeLine("CLEAR ALL\n");
-    await writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
-    await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+              await writeLine("CLEAR ALL\n");
+              await writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
+              await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
 
-    pendingRoundRef.current = null;
-    setPendingRound(null);
-    continue;
-  }
+              pendingRoundRef.current = null;
+              setPendingRound(null);
+              continue;
+            }
 
-  // ───────────────── END ROUND ─────────────────
-  if (line.startsWith("END ROUND")) {
-    if (roundPhase !== RoundPhase.PLAYING) {
-      console.warn("[SRV] Ignoring END ROUND (not playing yet)");
-      continue;
-    }
+            // ───────────────── END ROUND ─────────────────
+            if (line.startsWith("END ROUND")) {
+              if (roundPhaseRef.current !== RoundPhase.PLAYING) {
+                console.warn("[SRV] Ignoring END ROUND (not playing yet)");
+                return;
+              }
 
-    const parts = line.trim().split(/\s+/);
-    if (parts.length !== 3) continue;
+              const parts = line.trim().split(/\s+/);
+              if (parts.length !== 3) continue;
 
-    const from = parts[2] as FaceId;
-    console.log(`[SRV] END ROUND ${from}`);
+              const from = parts[2] as FaceId;
+              console.log(`[SRV] END ROUND ${from}`);
 
-    setRoundPhase(RoundPhase.IDLE);
-    handleEndRound(from);
-    continue;
-  }
+              handleEndRound(from);
+              continue;
+            }
 
-  // ───────────────── PONG ─────────────────
-  if (line.startsWith("PONG ")) {
-    const seqStr = line.substring(5).trim();
-    const seq = Number(seqStr);
-    if (!Number.isNaN(seq)) {
-      const sentAt = pendingRef.current.get(seq);
-      if (sentAt != null) {
-        const rtt = performance.now() - sentAt;
-        pendingRef.current.delete(seq);
+            // ───────────────── PONG ─────────────────
+            if (line.startsWith("PONG ")) {
+              const seqStr = line.substring(5).trim();
+              const seq = Number(seqStr);
+              if (!Number.isNaN(seq)) {
+                const sentAt = pendingRef.current.get(seq);
+                if (sentAt != null) {
+                  const rtt = performance.now() - sentAt;
+                  pendingRef.current.delete(seq);
 
-        setRecvCount(prevRecv => {
-          const newRecv = prevRecv + 1;
-          setAvgRttMs(prevAvg =>
-            prevAvg == null
-              ? rtt
-              : prevAvg + (rtt - prevAvg) / newRecv
-          );
-          return newRecv;
-        });
-      }
-    }
-  }
-}
+                  setRecvCount(prevRecv => {
+                    const newRecv = prevRecv + 1;
+                    setAvgRttMs(prevAvg =>
+                      prevAvg == null
+                        ? rtt
+                        : prevAvg + (rtt - prevAvg) / newRecv
+                    );
+                    return newRecv;
+                  });
+                }
+              }
+            }
+          }
 
 
         } catch {
@@ -235,35 +237,35 @@ for (const line of text.split(/\r?\n/)) {
 
   // Write helper (handles writeWith/WithoutResponse differences)
   // Returns true if the write actually happened, false on failure / busy
-const writeLine = useCallback((line: string): Promise<void> => {
-  const g = gattRef.current;
-  if (!g) {
-    pushLog("Write failed: not connected");
-    return Promise.resolve();
-  }
-
-  const data = new TextEncoder().encode(line);
-
-  writeQueueRef.current = writeQueueRef.current.then(async () => {
-    try {
-      const rx: any = g.rx;
-
-      if (typeof rx.writeValueWithoutResponse === "function") {
-        await rx.writeValueWithoutResponse(data);
-      } else if (typeof rx.writeValueWithResponse === "function") {
-        await rx.writeValueWithResponse(data);
-      } else {
-        await rx.writeValue(data);
-      }
-
-      pushLog(`[→ ESP] ${JSON.stringify(line.trimEnd())}`);
-    } catch (e: any) {
-      pushLog(`[ERR] ${e?.message || e}`);
+  const writeLine = useCallback((line: string): Promise<void> => {
+    const g = gattRef.current;
+    if (!g) {
+      pushLog("Write failed: not connected");
+      return Promise.resolve();
     }
-  });
 
-  return writeQueueRef.current;
-}, [pushLog]);
+    const data = new TextEncoder().encode(line);
+
+    writeQueueRef.current = writeQueueRef.current.then(async () => {
+      try {
+        const rx: any = g.rx;
+
+        if (typeof rx.writeValueWithoutResponse === "function") {
+          await rx.writeValueWithoutResponse(data);
+        } else if (typeof rx.writeValueWithResponse === "function") {
+          await rx.writeValueWithResponse(data);
+        } else {
+          await rx.writeValue(data);
+        }
+
+        pushLog(`[→ ESP] ${JSON.stringify(line.trimEnd())}`);
+      } catch (e: any) {
+        pushLog(`[ERR] ${e?.message || e}`);
+      }
+    });
+
+    return writeQueueRef.current;
+  }, [pushLog]);
 
   const toggleMovement = useCallback(async () => {
     const next = !moving;
@@ -286,27 +288,45 @@ const writeLine = useCallback((line: string): Promise<void> => {
 
   const handleEndRound = useCallback(
     async (from: FaceId) => {
+      // Decrease remaining rounds
+      remainingRoundsRef.current -= 1;
 
+      if (remainingRoundsRef.current <= 0) {
+        console.log("[SRV] Game finished");
+        setRoundPhase(RoundPhase.IDLE);
+        roundPhaseRef.current = RoundPhase.IDLE;
+        pendingRoundRef.current = null;
+        setPendingRound(null);
+        return;
+      }
+
+      // Choose next target
       const options = adjacency[from];
-      if (!options || options.length === 0) return;
+      if (!options || options.length === 0) {
+        console.warn("[SRV] No adjacency options for", from);
+        setRoundPhase(RoundPhase.IDLE);
+        roundPhaseRef.current = RoundPhase.IDLE;
+        return;
+      }
 
-      // choose random adjacent face
       const to = options[Math.floor(Math.random() * options.length)];
-
       const arrow = arrowFromToShort(from, to);
 
-      console.log(`[SRV] AUTO NEW ROUND ${from} → ${to} (${arrow})`);
+      const nextRound = { from, to, arrow };
 
-      console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
+      console.log(
+        `[SRV] NEXT ROUND ${from} → ${to} (${arrow}), remaining=${remainingRoundsRef.current}`
+      );
 
-      // Store intent, DO NOT DRAW YET
-      const round = { from, to, arrow };
-      pendingRoundRef.current = round;
-      setPendingRound(round);
+      // Register next round
+      pendingRoundRef.current = nextRound;
+      setPendingRound(nextRound);
+      setRoundPhase(RoundPhase.WAIT_BALANCE);
+      roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
 
-      // Ask ESP to start balancing for next round
+      // Tell ESP to start balancing
       await writeLine(
-        "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+        `ROUND START type=ARROW from=${from} to=${to} duration=800 remaining=${remainingRoundsRef.current}\n`
       );
     },
     [writeLine, arrowFromToShort]
@@ -350,12 +370,18 @@ const writeLine = useCallback((line: string): Promise<void> => {
         const from = params.from as FaceId;
         const to = params.to as FaceId;
         const arrow = arrowFromTo(from, to);
+        if (params.remaining) {
+          remainingRoundsRef.current = Number(params.remaining);
+        } else {
+          remainingRoundsRef.current = 1;
+        }
 
         const round = { from, to, arrow };
 
         pendingRoundRef.current = round;
         setPendingRound(round);
         setRoundPhase(RoundPhase.WAIT_BALANCE);
+        roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
 
         console.log(`[SRV] ROUND START ${from} → ${to} (${arrow})`);
 
@@ -486,6 +512,7 @@ const writeLine = useCallback((line: string): Promise<void> => {
     pendingRoundRef.current = round;
     setPendingRound(round);
     setRoundPhase(RoundPhase.WAIT_BALANCE);
+    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
 
     // Tell ESP to start balancing
     await writeLine(
