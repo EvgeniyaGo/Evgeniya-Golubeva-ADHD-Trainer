@@ -23,18 +23,18 @@ static FaceId lastUpFace = FACE_UNKNOWN;
 static uint32_t upFaceSince = 0;
 
 
-// ───────────────────────── BLE UUIDs (NUS) ─────────────────────────
+// --------------------------------------- BLE UUIDs (NUS) ---------------------------------------
 static const char *NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 static const char *NUS_RX_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 static const char *NUS_TX_UUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 
-// ───────────────────────── BLE state ─────────────────────────
+// --------------------------------------- BLE state ---------------------------------------
 static BLECharacteristic *txChar = nullptr;
 static bool bleConnected = false;
 static String rxBuffer;   // <-- IMPORTANT: line buffer
 
-// ───────────────────────── BLE send helper ─────────────────────────
+// --------------------------------------- BLE send helper ---------------------------------------
 static void nusSend(const String &line) {
   if (!txChar || !bleConnected) return;
   txChar->setValue(line.c_str());
@@ -42,7 +42,7 @@ static void nusSend(const String &line) {
 }
 
 
-// ───────────────────────── Face parsing ─────────────────────────
+// --------------------------------------- Face parsing ---------------------------------------
 FaceId parseFace(const String &s) {
   if (s == "TOP")    return FACE_UP;
   if (s == "BOTTOM") return FACE_DOWN;
@@ -88,7 +88,7 @@ ColorId parseColor(const String &s) {
   return COLOR_COUNT;
 }
 
-// ───────────────────────── Cube adjacency (1 step) ─────────────────────────
+// --------------------------------------- Cube adjacency (1 step) ---------------------------------------
 Vec3 faceNormal(FaceId f) {
   switch (f) {
     case FACE_UP:    return { 0,  0,  1};
@@ -168,7 +168,7 @@ bool arrowFromTo(FaceId from, FaceId to, ShapeId &arrowOut) {
   return false;
 }
 
-// ───────────────────────── Game / Round state ─────────────────────────
+// --------------------------------------- Game / Round state ---------------------------------------
 static bool inGame  = false;
 static bool inRound = false;
 
@@ -210,8 +210,7 @@ static bool kvBool(const String &v) {
 FaceId startFace = FACE_UNKNOWN;
 bool hasLeftStartFace = false;
 
-
-// ───────────────────────── Command handler ─────────────────────────
+// --------- // --------------------------------------- Command handler ---------------------------------------
 void handleCommand(const String &raw) {
   String line = raw;
   line.trim();
@@ -234,7 +233,7 @@ void handleCommand(const String &raw) {
     return;
   }
 
-  // ───────────────────────── Aliases for current UI ─────────────────────────
+  // --------------------------------------- Aliases for current UI ---------------------------------------
   // Your UI sends: "GAME 1" / "GAME 0
   if (upper == "GAME 1") {
     resetGameState();
@@ -276,7 +275,7 @@ void handleCommand(const String &raw) {
     return;
   }
 
-  // ───────────────────────── ROUND END (optional) ─────────────────────────
+  // --------------------------------------- ROUND END (optional) ---------------------------------------
   if (upper.startsWith("ROUND END")) {
     inRound = false;
     roundBalancing = false;
@@ -410,7 +409,7 @@ void handleCommand(const String &raw) {
 
 
 
-// ───────────────────────── BLE callbacks ─────────────────────────
+// --------------------------------------- BLE callbacks ---------------------------------------
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
     bleConnected = true;
@@ -453,7 +452,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 
 
 
-// ───────────────────────── setup / loop ─────────────────────────
+// --------------------------------------- setup / loop ---------------------------------------
 void setup() {
   Serial.begin(115200);
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -528,7 +527,7 @@ void loop() {
 uint32_t now = millis();
 const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
 
-// ───────────────────────── Debug state print ─────────────────────────
+// --------------------------------------- Debug state print ---------------------------------------
 if (now - lastDebugPrintMs >= 5000) {   // once per second
   lastDebugPrintMs = now;
 
@@ -578,9 +577,17 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
   Serial.println(isFaceLocked() ? "Y" : "N");
 
   }
+  // --------------------------------------- Countdown overlay ---------------------------------------
+  // Countdown is rendered as a 1-pixel border on the current active face.
+  // If up face is unknown, countdown stays on the last known face.
+  if (isCountdownActive()) {
+    FaceId active = isValidUpFace() ? imu.upFace : FACE_UNKNOWN;
+    updateCountdown(active);
+  }
 
-  FaceId upFace = imu.upFace;
-  // ───────────────────────── Balancing phase ─────────────────────────
+
+  // --------------------------------------- Balancing phase ---------------------------------------
+
   if (inRound && roundBalancing) {
 
     // timeout
@@ -589,6 +596,8 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
       inRound = false;
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
+      stopCountdown();
+
       return;
     }
 
@@ -597,9 +606,15 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
       roundLockedFace = locked;
 
       roundBalancing = false;
+
+      // Round play starts now (after we got a stable locked face)
       roundStartMs = millis();
       startFace = locked;
       hasLeftStartFace = false;
+
+      // Start the time-bound countdown border
+      startCountdown(roundCfg.durationMs);
+      updateCountdown(locked); // render immediately on the locked face
 
       String msg = "ROUND BALANCE side=";
       msg += faceToString(locked);
@@ -607,7 +622,7 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
       nusSend(msg);
     }
 
-    return;  
+    return;
   }
 
   // Only consider VALID faces
@@ -618,12 +633,12 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
   }
 
   // Track stability of UP face
-  if (upFace != lastUpFace) {
-    lastUpFace = upFace;
+  if (imu.upFace != lastUpFace) {
+    lastUpFace = imu.upFace;
     upFaceSince = now;
   }
 
-  if (!hasLeftStartFace && upFace != startFace) {
+  if (!hasLeftStartFace && imu.upFace != startFace) {
     hasLeftStartFace = true;
   }
 
@@ -635,7 +650,7 @@ if (currentTargetFace != FACE_UNKNOWN &&
   uint32_t elapsed = now - roundStartMs;
 
   String msg = "END ROUND result=FAIL face=";
-  msg += faceToString(upFace);
+  msg += faceToString(imu.upFace);
   msg += " time=";
   msg += elapsed;
   msg += " reason=TIMEOUT\n";
@@ -648,36 +663,38 @@ if (currentTargetFace != FACE_UNKNOWN &&
 
 if (currentTargetFace != FACE_UNKNOWN &&
     hasLeftStartFace &&
-    upFace != currentTargetFace &&
+    imu.upFace != currentTargetFace &&
     (now - upFaceSince) >= HOLD_TIME_MS) {
 
   uint32_t elapsed = now - roundStartMs;
 
   String msg = "END ROUND result=FAIL face=";
-  msg += faceToString(upFace);
+  msg += faceToString(imu.upFace);
   msg += " time=";
   msg += elapsed;
   msg += " reason=WRONG_FACE\n";
 
   nusSend(msg.c_str());
+      stopCountdown();
 
   currentTargetFace = FACE_UNKNOWN;
   return;
 }
 
 if (currentTargetFace != FACE_UNKNOWN &&
-    upFace == currentTargetFace &&
+    imu.upFace == currentTargetFace &&
     (now - upFaceSince) >= HOLD_TIME_MS) {
 
   uint32_t elapsed = now - roundStartMs;
 
   String msg = "END ROUND result=SUCCESS face=";
-  msg += faceToString(upFace);
+  msg += faceToString(imu.upFace);
   msg += " time=";
   msg += elapsed;
   msg += "\n";
 
   nusSend(msg.c_str());
+      stopCountdown();
 
   currentTargetFace = FACE_UNKNOWN;
   return;

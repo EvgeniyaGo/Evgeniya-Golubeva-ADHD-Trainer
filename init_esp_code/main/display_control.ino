@@ -36,7 +36,7 @@ static uint32_t countdownStartTime = 0;
 static uint32_t countdownDuration = 0;
 static FaceId countdownFace = FACE_UNKNOWN;
 static ColorId countdownColor = COLOR_BLUE;
-static uint8_t countdownPixelsRemaining = (MATRIX_WIDTH * 4) - 4;
+static uint8_t   countdownPixelsRemaining = (MATRIX_WIDTH * 2) + (MATRIX_HEIGHT * 2) - 4; // border pixels (10x10 => 36)
 
 // Color definitions
 static ColorShades colorPalette[COLOR_COUNT];
@@ -246,33 +246,58 @@ void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation
 void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   if (!countdownActive) return;
 
-  const uint8_t PERIMETER_LEN = (MATRIX_WIDTH * 4) - 4; // 10x10 => 36
-  const uint8_t toDraw = (countdownPixelsRemaining > PERIMETER_LEN) ? PERIMETER_LEN : countdownPixelsRemaining;
+  const uint8_t totalPixels = (MATRIX_WIDTH * 2) + (MATRIX_HEIGHT * 2) - 4; // 10x10 => 36
+  uint8_t remaining = countdownPixelsRemaining;
+  if (remaining > totalPixels) remaining = totalPixels;
 
+  // Disappearance order:
+  // (1,0) → ... → (W-1,0) → (W-1,1) → ... → (W-1,H-1) → (W-2,H-1) → ... → (0,H-1) → (0,H-2) → ... → (0,1) → (0,0)
   auto idxToXY = [](uint8_t idx, uint8_t &x, uint8_t &y) {
-    // Clockwise, starting at (0,0):
-    // top row (0,0 -> 9,0) : 10
-    // right col (9,1 -> 9,9) : 9
-    // bottom row (8,9 -> 0,9) : 9
-    // left col (0,8 -> 0,1) : 8
-    if (idx < MATRIX_WIDTH) {                 // top
-      x = idx; y = 0;
-    } else if (idx < MATRIX_WIDTH + (MATRIX_HEIGHT - 1)) { // right
-      x = MATRIX_WIDTH - 1;
-      y = (idx - MATRIX_WIDTH) + 1;
-    } else if (idx < MATRIX_WIDTH + 2*(MATRIX_HEIGHT - 1)) { // bottom
-      uint8_t k = idx - (MATRIX_WIDTH + (MATRIX_HEIGHT - 1));
-      x = (MATRIX_WIDTH - 2) - k;
-      y = MATRIX_HEIGHT - 1;
-    } else {                                  // left
-      uint8_t k = idx - (MATRIX_WIDTH + 2*(MATRIX_HEIGHT - 1));
-      x = 0;
-      y = (MATRIX_HEIGHT - 2) - k;
+    const uint8_t W = MATRIX_WIDTH;
+    const uint8_t H = MATRIX_HEIGHT;
+
+    const uint8_t topLen   = W - 1;       // (1..W-1) inclusive
+    const uint8_t rightLen = H - 1;       // (1..H-1)
+    const uint8_t botLen   = W - 1;       // (W-2..0) + corner (0,H-1)
+    const uint8_t leftLen  = H - 2;       // (H-2..1)
+    // final pixel (0,0) is idx = totalPixels-1
+
+    if (idx < topLen) {                   // top row, skipping (0,0)
+      x = idx + 1;
+      y = 0;
+      return;
     }
+    idx -= topLen;
+
+    if (idx < rightLen) {                 // right column
+      x = W - 1;
+      y = idx + 1;
+      return;
+    }
+    idx -= rightLen;
+
+    if (idx < botLen) {                   // bottom row (includes (0,H-1))
+      x = (W - 2) - idx;
+      y = H - 1;
+      return;
+    }
+    idx -= botLen;
+
+    if (idx < leftLen) {                  // left column (excluding corners)
+      x = 0;
+      y = (H - 2) - idx;
+      return;
+    }
+
+    // last pixel
+    x = 0;
+    y = 0;
   };
 
-  // Draw remaining pixels
-  for (uint8_t i = 0; i < toDraw; i++) {
+  // If remaining=N, that means the first (totalPixels-N) pixels have already disappeared.
+  const uint8_t removed = totalPixels - remaining;
+
+  for (uint8_t i = removed; i < totalPixels; i++) {
     uint8_t x, y;
     idxToXY(i, x, y);
     uint16_t p = coordToIndex(x, y);
@@ -328,15 +353,15 @@ void updateCountdown(FaceId activeFace) {
     return;
   }
 
-  // Full perimeter pixels (10x10 => 36) -> remove pixel-by-pixel
+  // Border pixels (10x10 => 36). Pixels disappear clockwise, with (0,0) last.
+  const uint8_t totalPixels = (MATRIX_WIDTH * 2) + (MATRIX_HEIGHT * 2) - 4;
   const uint32_t total = countdownDuration;
-  const uint8_t totalPixels = (MATRIX_WIDTH * 4) - 4;
-  const uint32_t remainingMs = total - elapsed;
-
-  // ceil so the first pixel doesn't disappear instantly
-  uint32_t px = (remainingMs * totalPixels + total - 1) / total;
-  if (px > totalPixels) px = totalPixels;
-  countdownPixelsRemaining = (uint8_t)px;
+  uint32_t removed = (elapsed * (uint32_t)totalPixels) / total;
+  if (removed >= totalPixels) {
+    stopCountdown();
+    return;
+  }
+  countdownPixelsRemaining = (uint8_t)(totalPixels - removed);
 
   // Move countdown to active face if changed
   if (activeFace != countdownFace && activeFace < FACE_COUNT) {

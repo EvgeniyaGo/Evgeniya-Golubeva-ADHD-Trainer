@@ -69,6 +69,7 @@ export default function App() {
   const remainingRoundsRef = useRef<number>(0);
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
+  const roundDurationRef = useRef<number>(800); // default fallback
 
   type EndRoundFailData = {
   face: FaceId;
@@ -344,7 +345,7 @@ export default function App() {
 
       // Tell ESP to start balancing
       await writeLine(
-        `ROUND START type=ARROW from=${from} to=${to} duration=800 remaining=${remainingRoundsRef.current}\n`
+        `ROUND START type=ARROW from=${from} to=${to} duration=${roundDurationRef.current} remaining=${remainingRoundsRef.current}\n`
       );
     },
     [writeLine, arrowFromToShort]
@@ -393,7 +394,14 @@ export default function App() {
         } else {
           remainingRoundsRef.current = 1;
         }
-
+        if (params.duration) {
+          roundDurationRef.current = Number(params.duration);
+          console.log(
+            "[SRV] Round duration set to",
+            roundDurationRef.current,
+            "ms"
+          );
+        }
         const round = { from, to, arrow };
 
         pendingRoundRef.current = round;
@@ -593,7 +601,7 @@ const handleRoundFail = useCallback(
 
     // Ask ESP to start balancing again
     await writeLine(
-      `ROUND START type=ARROW from=${data.face} to=${to} duration=800 remaining=${remainingRoundsRef.current}\n`
+      `ROUND START type=ARROW from=${data.face} to=${to} duration=${roundDurationRef.current} remaining=${remainingRoundsRef.current}\n`
     );
   },
   [writeLine, arrowFromToShort]
