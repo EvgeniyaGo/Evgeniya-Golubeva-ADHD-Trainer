@@ -54,18 +54,17 @@ export default function App() {
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
+type RoundType = "ARROW" | "PAUSE"; // later add "OPPOSITE"
 
+type PendingRound =
+  | { type: "ARROW"; from: FaceId; to: FaceId; arrow: ShapeId; duration: number; remaining: number }
+  | { type: "PAUSE"; duration: number; remaining: number };
 
   // refs
   const gattRef = useRef<GattStuff | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
   const writeBusyRef = useRef(false); // NEW: prevent overlapping GATT writes
-  type PendingRound = {
-    from: FaceId;
-    to: FaceId;
-    arrow: ShapeId;
-  };
   const remainingRoundsRef = useRef<number>(0);
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
@@ -76,6 +75,7 @@ export default function App() {
   time?: number;
   reason?: string;
 };
+
 
 
   const pushLog = useCallback((line: string) => {
@@ -136,36 +136,38 @@ export default function App() {
             if (!line) continue;
 
             // ───────────────── ROUND BALANCE ─────────────────
-            if (line.startsWith("ROUND BALANCE")) {
-              const round = pendingRoundRef.current;
-              if (!round) {
-                console.warn("[SRV] BALANCE but no pending round");
-                continue;
-              }
-              setRoundPhase(RoundPhase.PLAYING);
-              roundPhaseRef.current = RoundPhase.PLAYING;
+if (line.startsWith("ROUND BALANCE")) {
+  const round = pendingRoundRef.current;
+  if (!round) {
+    console.warn("[SRV] BALANCE but no pending round");
+    continue;
+  }
 
-              const parts = line.split(/\s+/);
-              const sidePart = parts.find(p =>
-                p.toLowerCase().startsWith("side=")
-              );
-              if (!sidePart) continue;
+  setRoundPhase(RoundPhase.PLAYING);
+  roundPhaseRef.current = RoundPhase.PLAYING;
 
-              const balancedFace = sidePart.split("=")[1] as FaceId;
-              const { to, arrow } = round;
+  const parts = line.split(/\s+/);
+  const sidePart = parts.find(p => p.toLowerCase().startsWith("side="));
+  if (!sidePart) continue;
 
-              console.log(
-                `[SRV] BALANCED on ${balancedFace}, drawing ${round.from} → ${to} (${arrow})`
-              );
+  const balancedFace = sidePart.split("=")[1] as FaceId;
 
-              await writeLine("CLEAR ALL\n");
-              await writeLine(`DRAW SHAPE ${balancedFace} ${arrow} COLOR_BLUE\n`);
-              await writeLine(`DRAW SHAPE ${to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+  await writeLine("CLEAR ALL\n");
 
-              pendingRoundRef.current = null;
-              setPendingRound(null);
-              continue;
-            }
+  if (round.type === "ARROW") {
+    // draw arrow on balancedFace, and target on "to"
+    await writeLine(`DRAW SHAPE ${balancedFace} ${round.arrow} COLOR_BLUE\n`);
+    await writeLine(`DRAW SHAPE ${round.to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+  } else {
+    // PAUSE: no arrow, no circle
+    // countdown is handled by ESP firmware display_control on lock/start
+    console.log(`[SRV] PAUSE round active on ${balancedFace} for ${round.duration}ms`);
+  }
+
+  pendingRoundRef.current = null;
+  setPendingRound(null);
+  continue;
+}
 
             // ───────────────── END ROUND ─────────────────
             if (line.startsWith("END ROUND")) {
@@ -175,7 +177,7 @@ export default function App() {
                 continue;
               }
 
-              if (roundPhaseRef.current !== RoundPhase.PLAYING) {
+              if (roundPhaseRef.current !== RoundPhase.PLAYING && roundPhaseRef.current !== RoundPhase.WAIT_BALANCE) {
                 console.warn("[SRV] Ignoring END ROUND (not playing yet)");
                 continue;
               }
@@ -305,6 +307,32 @@ export default function App() {
     return arrowFromTo(from, to);
   }, []);
 
+const randInt = (min: number, max: number) =>
+  Math.floor(min + Math.random() * (max - min + 1));
+
+function chooseNextRound(from: FaceId, remaining: number): PendingRound {
+  // 50/50 for now
+  const choosePause = Math.random() < 0.5;
+
+  if (choosePause) {
+    const duration = randInt(2000, 10000); // 2–10s
+    return { type: "PAUSE", duration, remaining };
+  }
+
+  const options = adjacency[from];
+  const to = options[Math.floor(Math.random() * options.length)];
+  const arrow = arrowFromTo(from, to);
+  return { type: "ARROW", from, to, arrow, duration: roundDurationRef.current, remaining };
+}
+
+function roundStartLine(round: PendingRound): string {
+  if (round.type === "PAUSE") {
+    return `ROUND START type=PAUSE duration=${round.duration} remaining=${round.remaining}\n`;
+  }
+  return `ROUND START type=ARROW from=${round.from} to=${round.to} duration=${round.duration} remaining=${round.remaining}\n`;
+}
+  
+
   const handleEndRound = useCallback(
     async (from: FaceId) => {
       // Decrease remaining rounds
@@ -331,22 +359,21 @@ export default function App() {
       const to = options[Math.floor(Math.random() * options.length)];
       const arrow = arrowFromToShort(from, to);
 
-      const nextRound = { from, to, arrow };
+const nextRound = chooseNextRound(from, remainingRoundsRef.current);
 
-      console.log(
-        `[SRV] NEXT ROUND ${from} → ${to} (${arrow}), remaining=${remainingRoundsRef.current}`
-      );
+console.log(`[SRV] NEXT ROUND type=${nextRound.type} remaining=${remainingRoundsRef.current}`);
 
-      // Register next round
-      pendingRoundRef.current = nextRound;
-      setPendingRound(nextRound);
-      setRoundPhase(RoundPhase.WAIT_BALANCE);
-      roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+pendingRoundRef.current = nextRound;
+setPendingRound(
+  nextRound.type === "ARROW"
+    ? { from: nextRound.from, to: nextRound.to, arrow: nextRound.arrow }
+    : null
+);
 
-      // Tell ESP to start balancing
-      await writeLine(
-        `ROUND START type=ARROW from=${from} to=${to} duration=${roundDurationRef.current} remaining=${remainingRoundsRef.current}\n`
-      );
+setRoundPhase(RoundPhase.WAIT_BALANCE);
+roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+
+await writeLine(roundStartLine(nextRound));
     },
     [writeLine, arrowFromToShort]
   );
@@ -372,54 +399,45 @@ export default function App() {
     }
 
     // ── INTERCEPT ROUND START (AUTHORITATIVE) ───────────
-    if (upper.startsWith("ROUND START")) {
-      // Parse key=value params
-      const params = Object.fromEntries(
-        upper
-          .split(/\s+/)
-          .slice(2)
-          .map(p => {
-            const [k, v] = p.split("=");
-            return [k.toLowerCase(), v];
-          })
-      );
-      console.log("[DBG] params =", params);
+if (upper.startsWith("ROUND START")) {
+  const params = Object.fromEntries(
+    upper.split(/\s+/).slice(2).map(p => {
+      const [k, v] = p.split("=");
+      return [k.toLowerCase(), v];
+    })
+  );
 
-      if (params.type === "ARROW" && params.from && params.to) {
-        const from = params.from as FaceId;
-        const to = params.to as FaceId;
-        const arrow = arrowFromTo(from, to);
-        if (params.remaining) {
-          remainingRoundsRef.current = Number(params.remaining);
-        } else {
-          remainingRoundsRef.current = 1;
-        }
-        if (params.duration) {
-          roundDurationRef.current = Number(params.duration);
-          console.log(
-            "[SRV] Round duration set to",
-            roundDurationRef.current,
-            "ms"
-          );
-        }
-        const round = { from, to, arrow };
+  const remaining = params.remaining ? Number(params.remaining) : 1;
+  const duration = params.duration ? Number(params.duration) : roundDurationRef.current;
 
-        pendingRoundRef.current = round;
-        setPendingRound(round);
-        setRoundPhase(RoundPhase.WAIT_BALANCE);
-        roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+  remainingRoundsRef.current = remaining;
+  roundDurationRef.current = duration;
 
-        console.log(`[SRV] ROUND START ${from} → ${to} (${arrow})`);
+  if (params.type === "PAUSE") {
+    const round: PendingRound = { type: "PAUSE", duration, remaining };
+    pendingRoundRef.current = round;
+    setPendingRound(null);
+    setRoundPhase(RoundPhase.WAIT_BALANCE);
+    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+  }
 
-      }
+  if (params.type === "ARROW" && params.from && params.to) {
+    const from = params.from as FaceId;
+    const to = params.to as FaceId;
+    const arrow = arrowFromTo(from, to);
 
-      // Pass command to ESP unchanged
-      const line = raw.endsWith("\n") ? raw : raw + "\n";
-      await writeLine(line);
-      setCommand("");
-      return;
-    }
+    const round: PendingRound = { type: "ARROW", from, to, arrow, duration, remaining };
+    pendingRoundRef.current = round;
+    setPendingRound({ from, to, arrow });
+    setRoundPhase(RoundPhase.WAIT_BALANCE);
+    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+  }
 
+  const line = raw.endsWith("\n") ? raw : raw + "\n";
+  await writeLine(line);
+  setCommand("");
+  return;
+}
 
     if (upper.startsWith("DRAW ARROW")) {
       const parts = upper.split(/\s+/);
@@ -438,9 +456,20 @@ export default function App() {
       console.log(`[SRV] QUEUE NEW ROUND ${from} → ${to} (${arrow})`);
 
       // Store intent, DO NOT DRAW YET
-      const round = { from, to, arrow };
-      pendingRoundRef.current = round;
-      setPendingRound(round);
+// Store intent, DO NOT DRAW YET (manual ARROW round)
+const round: PendingRound = {
+  type: "ARROW",
+  from,
+  to,
+  arrow,
+  duration: roundDurationRef.current,
+  remaining: remainingRoundsRef.current || 1,
+};
+
+pendingRoundRef.current = round;
+
+// UI arrow preview ONLY
+setPendingRound({ from, to, arrow });
 
       // Ask ESP to start balancing for next round
       await writeLine(
@@ -582,27 +611,19 @@ const handleRoundFail = useCallback(
     const to = options[Math.floor(Math.random() * options.length)];
     const arrow = arrowFromToShort(data.face, to);
 
-    const nextRound = {
-      from: data.face,
-      to,
-      arrow,
-    };
+const nextRound = chooseNextRound(data.face, remainingRoundsRef.current);
 
-    console.log(
-      `[SRV] NEXT ROUND (after FAIL) ${data.face} → ${to} (${arrow}), remaining=${remainingRoundsRef.current}`
-    );
+pendingRoundRef.current = nextRound;
+setPendingRound(
+  nextRound.type === "ARROW"
+    ? { from: nextRound.from, to: nextRound.to, arrow: nextRound.arrow }
+    : null
+);
 
-    // Register next round
-    pendingRoundRef.current = nextRound;
-    setPendingRound(nextRound);
+roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+setRoundPhase(RoundPhase.WAIT_BALANCE);
 
-    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
-    setRoundPhase(RoundPhase.WAIT_BALANCE);
-
-    // Ask ESP to start balancing again
-    await writeLine(
-      `ROUND START type=ARROW from=${data.face} to=${to} duration=${roundDurationRef.current} remaining=${remainingRoundsRef.current}\n`
-    );
+await writeLine(roundStartLine(nextRound));
   },
   [writeLine, arrowFromToShort]
 );
@@ -620,13 +641,20 @@ const handleRoundFail = useCallback(
 
     const arrow = arrowFromTo(from, to);
 
-    const round = { from, to, arrow };
+// Store intent, DO NOT DRAW YET (manual ARROW round)
+const round: PendingRound = {
+  type: "ARROW",
+  from,
+  to,
+  arrow,
+  duration: roundDurationRef.current,
+  remaining: remainingRoundsRef.current || 1,
+};
 
-    // 🔑 REGISTER ROUND (THIS WAS MISSING)
-    pendingRoundRef.current = round;
-    setPendingRound(round);
-    setRoundPhase(RoundPhase.WAIT_BALANCE);
-    roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+pendingRoundRef.current = round;
+
+// UI arrow preview ONLY
+setPendingRound({ from, to, arrow });
 
     // Tell ESP to start balancing
     await writeLine(

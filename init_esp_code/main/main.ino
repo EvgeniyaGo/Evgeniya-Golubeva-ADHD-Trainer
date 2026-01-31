@@ -22,17 +22,24 @@ static uint32_t stableSince = 0;
 static FaceId lastUpFace = FACE_UNKNOWN;
 static uint32_t upFaceSince = 0;
 
+// ---------------- PAUSE round state ----------------
+static bool pauseActive = false;
+static FaceId pauseFace = FACE_UNKNOWN;
+static uint32_t pauseStartMs = 0;
+static uint32_t pauseDurationMs = 0;
+bool pauseWaitingForClear = false;
+
 
 // --------------------------------------- BLE UUIDs (NUS) ---------------------------------------
 static const char *NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-static const char *NUS_RX_UUID      = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-static const char *NUS_TX_UUID      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+static const char *NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+static const char *NUS_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 
 // --------------------------------------- BLE state ---------------------------------------
 static BLECharacteristic *txChar = nullptr;
 static bool bleConnected = false;
-static String rxBuffer;   // <-- IMPORTANT: line buffer
+static String rxBuffer;  // <-- IMPORTANT: line buffer
 
 // --------------------------------------- BLE send helper ---------------------------------------
 static void nusSend(const String &line) {
@@ -44,60 +51,60 @@ static void nusSend(const String &line) {
 
 // --------------------------------------- Face parsing ---------------------------------------
 FaceId parseFace(const String &s) {
-  if (s == "TOP")    return FACE_UP;
+  if (s == "TOP") return FACE_UP;
   if (s == "BOTTOM") return FACE_DOWN;
-  if (s == "LEFT")   return FACE_LEFT;
-  if (s == "RIGHT")  return FACE_RIGHT;
-  if (s == "FRONT")  return FACE_FRONT;
-  if (s == "BACK")   return FACE_BACK;
+  if (s == "LEFT") return FACE_LEFT;
+  if (s == "RIGHT") return FACE_RIGHT;
+  if (s == "FRONT") return FACE_FRONT;
+  if (s == "BACK") return FACE_BACK;
   return FACE_UNKNOWN;
 }
 
-const char* faceToString(FaceId f) {
+const char *parseFace(FaceId f) {
   switch (f) {
-    case FACE_UP:    return "TOP";
+    case FACE_UP: return "TOP";
     case FACE_DOWN: return "BOTTOM";
-    case FACE_LEFT:   return "LEFT";
-    case FACE_RIGHT:  return "RIGHT";
-    case FACE_FRONT:  return "FRONT";
-    case FACE_BACK:   return "BACK";
-    default:          return "UNKNOWN";
+    case FACE_LEFT: return "LEFT";
+    case FACE_RIGHT: return "RIGHT";
+    case FACE_FRONT: return "FRONT";
+    case FACE_BACK: return "BACK";
+    default: return "UNKNOWN";
   }
 }
 
 
 ShapeId parseShape(const String &s) {
-  if (s == "SHAPE_ARROW_UP")    return SHAPE_ARROW_UP;
-  if (s == "SHAPE_ARROW_DOWN")  return SHAPE_ARROW_DOWN;
-  if (s == "SHAPE_ARROW_LEFT")  return SHAPE_ARROW_LEFT;
+  if (s == "SHAPE_ARROW_UP") return SHAPE_ARROW_UP;
+  if (s == "SHAPE_ARROW_DOWN") return SHAPE_ARROW_DOWN;
+  if (s == "SHAPE_ARROW_LEFT") return SHAPE_ARROW_LEFT;
   if (s == "SHAPE_ARROW_RIGHT") return SHAPE_ARROW_RIGHT;
-  if (s == "SHAPE_CIRCLE_6X6")  return SHAPE_CIRCLE_6X6;
+  if (s == "SHAPE_CIRCLE_6X6") return SHAPE_CIRCLE_6X6;
   return SHAPE_COUNT;
 }
 
 ColorId parseColor(const String &s) {
-  if (s == "COLOR_BLACK")  return COLOR_BLACK;
-  if (s == "COLOR_BLUE")   return COLOR_BLUE;
-  if (s == "COLOR_GREEN")  return COLOR_GREEN;
+  if (s == "COLOR_BLACK") return COLOR_BLACK;
+  if (s == "COLOR_BLUE") return COLOR_BLUE;
+  if (s == "COLOR_GREEN") return COLOR_GREEN;
   if (s == "COLOR_YELLOW") return COLOR_YELLOW;
-  if (s == "COLOR_RED")    return COLOR_RED;
+  if (s == "COLOR_RED") return COLOR_RED;
   if (s == "COLOR_PURPLE") return COLOR_PURPLE;
-  if (s == "COLOR_CYAN")   return COLOR_CYAN;
+  if (s == "COLOR_CYAN") return COLOR_CYAN;
   if (s == "COLOR_ORANGE") return COLOR_ORANGE;
-  if (s == "COLOR_WHITE")  return COLOR_WHITE;
+  if (s == "COLOR_WHITE") return COLOR_WHITE;
   return COLOR_COUNT;
 }
 
 // --------------------------------------- Cube adjacency (1 step) ---------------------------------------
 Vec3 faceNormal(FaceId f) {
   switch (f) {
-    case FACE_UP:    return { 0,  0,  1};
-    case FACE_DOWN:  return { 0,  0, -1};
-    case FACE_FRONT: return { 0,  1,  0};
-    case FACE_BACK:  return { 0, -1,  0};
-    case FACE_RIGHT: return { 1,  0,  0};
-    case FACE_LEFT:  return {-1,  0,  0};
-    default:         return { 0,  0,  0};
+    case FACE_UP: return { 0, 0, 1 };
+    case FACE_DOWN: return { 0, 0, -1 };
+    case FACE_FRONT: return { 0, 1, 0 };
+    case FACE_BACK: return { 0, -1, 0 };
+    case FACE_RIGHT: return { 1, 0, 0 };
+    case FACE_LEFT: return { -1, 0, 0 };
+    default: return { 0, 0, 0 };
   }
 }
 bool areFacesAdjacent(FaceId a, FaceId b) {
@@ -107,40 +114,40 @@ bool areFacesAdjacent(FaceId a, FaceId b) {
   Vec3 na = faceNormal(a);
   Vec3 nb = faceNormal(b);
 
-  int dot = na.x*nb.x + na.y*nb.y + na.z*nb.z;
+  int dot = na.x * nb.x + na.y * nb.y + na.z * nb.z;
   return dot == 0;
 }
 
 void faceBasis(FaceId f, Vec3 &up, Vec3 &right) {
   switch (f) {
     case FACE_UP:
-      up    = { 0,  -1,  0};
-      right = { 1,  0,  0};
+      up = { 0, -1, 0 };
+      right = { 1, 0, 0 };
       break;
 
     case FACE_DOWN:
-      up    = { 0, -1,  0};
-      right = { -1,  0,  0};
+      up = { 0, -1, 0 };
+      right = { -1, 0, 0 };
       break;
 
     case FACE_FRONT:
-      up    = { 0,  0,  1};
-      right = { 1,  0,  0};
+      up = { 0, 0, 1 };
+      right = { 1, 0, 0 };
       break;
 
     case FACE_BACK:
-      up    = { 0,  0,  1};
-      right = {-1,  0,  0};
+      up = { 0, 0, 1 };
+      right = { -1, 0, 0 };
       break;
 
     case FACE_RIGHT:
-      up    = { 0,  0,  1};
-      right = { 0, -1,  0};
+      up = { 0, 0, 1 };
+      right = { 0, -1, 0 };
       break;
 
     case FACE_LEFT:
-      up    = { 0,  0,  1};
-      right = { 0,  1,  0};
+      up = { 0, 0, 1 };
+      right = { 0, 1, 0 };
       break;
   }
 }
@@ -148,34 +155,46 @@ bool arrowFromTo(FaceId from, FaceId to, ShapeId &arrowOut) {
   if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) return false;
 
   Vec3 nFrom = faceNormal(from);
-  Vec3 nTo   = faceNormal(to);
+  Vec3 nTo = faceNormal(to);
 
-  int dot = nFrom.x*nTo.x + nFrom.y*nTo.y + nFrom.z*nTo.z;
+  int dot = nFrom.x * nTo.x + nFrom.y * nTo.y + nFrom.z * nTo.z;
   if (dot != 0) return false;
 
   Vec3 up, right;
   faceBasis(from, up, right);
 
   // Project target normal onto source face axes
-  int du = nTo.x*up.x    + nTo.y*up.y    + nTo.z*up.z;
-  int dr = nTo.x*right.x + nTo.y*right.y + nTo.z*right.z;
+  int du = nTo.x * up.x + nTo.y * up.y + nTo.z * up.z;
+  int dr = nTo.x * right.x + nTo.y * right.y + nTo.z * right.z;
 
-  if (du == 1)  { arrowOut = SHAPE_ARROW_UP;    return true; }
-  if (du == -1) { arrowOut = SHAPE_ARROW_DOWN;  return true; }
-  if (dr == 1)  { arrowOut = SHAPE_ARROW_RIGHT; return true; }
-  if (dr == -1) { arrowOut = SHAPE_ARROW_LEFT;  return true; }
+  if (du == 1) {
+    arrowOut = SHAPE_ARROW_UP;
+    return true;
+  }
+  if (du == -1) {
+    arrowOut = SHAPE_ARROW_DOWN;
+    return true;
+  }
+  if (dr == 1) {
+    arrowOut = SHAPE_ARROW_RIGHT;
+    return true;
+  }
+  if (dr == -1) {
+    arrowOut = SHAPE_ARROW_LEFT;
+    return true;
+  }
 
   return false;
 }
 
 // --------------------------------------- Game / Round state ---------------------------------------
-static bool inGame  = false;
+static bool inGame = false;
 static bool inRound = false;
 
 static void resetGameState() {
   inGame = false;
   inRound = false;
-  currentTargetFace = FACE_UNKNOWN; // wait END ROUND"
+  currentTargetFace = FACE_UNKNOWN;  // wait END ROUND"
   clearAllFaces();
 }
 
@@ -188,7 +207,7 @@ static uint32_t roundStartMs = 0;
 static uint32_t lastDebugPrintMs = 0;
 
 static RoundConfig roundCfg;
-static bool roundBalancing = false;     // ждём lock
+static bool roundBalancing = false;  // ждём lock
 static uint32_t roundBalanceStartMs = 0;
 static FaceId roundLockedFace = FACE_UNKNOWN;
 
@@ -225,6 +244,71 @@ void handleCommand(const String &raw) {
     nusSend("OK GAME START\n");
     return;
   }
+  // ---------------- PAUSE ROUND ----------------
+  if (upper .startsWith("ROUND START")) {
+
+    // Check if this is PAUSE
+    if (upper .indexOf("TYPE=PAUSE") >= 0) {
+
+      // Default duration
+      pauseDurationMs = 5000;
+
+      int dIdx = upper.indexOf("DURATION=");
+      if (dIdx >= 0) {
+        int start = dIdx + 9;
+        int end = upper.indexOf(' ', start);
+        if (end < 0) end = upper.length();
+        pauseDurationMs = upper.substring(start, end).toInt();
+      }
+
+      pauseActive = true;
+      pauseFace = FACE_UNKNOWN;
+      pauseStartMs = 0;
+
+      inRound = true;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+
+      clearAllFaces();
+      stopCountdown();
+
+      nusSend("OK ROUND START\n");
+      return;  // CRITICAL: no fallthrough
+    }
+    if (upper.indexOf("TYPE=ARROW") >= 0) {
+
+      String fromStr = kvGet(upper, "FROM");
+      String toStr = kvGet(upper, "TO");
+      String durStr = kvGet(upper, "DURATION");
+
+      if (!fromStr.length() || !toStr.length() || !durStr.length()) {
+        nusSend("ERR BAD ARROW PARAMS\n");
+        return;
+      }
+
+      FaceId from = parseFace(fromStr);
+      FaceId to = parseFace(toStr);
+
+      if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) {
+        nusSend("ERR BAD FACE\n");
+        return;
+      }
+
+      currentTargetFace = to;
+      roundCfg.durationMs = durStr.toInt();
+      inRound = true;
+      roundBalancing = true;
+      pauseActive = false;
+      roundBalanceStartMs = millis();
+
+      nusSend("OK ROUND START\n");
+      return;
+    }
+
+    nusSend("ERR UNKNOWN ROUND TYPE\n");
+    return;
+  }
+
 
   // GAME END
   if (upper == "GAME END") {
@@ -250,30 +334,16 @@ void handleCommand(const String &raw) {
   if (upper.startsWith("CLEAR ALL")) {
     clearAllFaces();
     nusSend("OK CLEAR ALL\n");
+
+  if (pauseActive && pauseWaitingForClear) {
+    pauseWaitingForClear = false;
+    pauseStartMs = millis();
+    startCountdown(pauseDurationMs);
+  }
+
     return;
   }
 
-    if (upper.startsWith("ROUND START")) {
-    if (!inGame) { nusSend("ERR NOT_IN_GAME\n"); return; }
-
-    // читаем параметры
-    String durStr = kvGet(upper, "DURATION");
-    if (!durStr.length()) { nusSend("ERR MISSING_DURATION\n"); return; }
-
-    roundCfg.durationMs = (uint32_t)durStr.toInt();
-    roundCfg.wantLocked = kvBool(kvGet(upper, "WANT_LOCKED"));
-    roundCfg.allowSideChange = kvBool(kvGet(upper, "ALLOW_SIDE_CHANGE"));
-
-    // поднимаем round state
-    inRound = true;
-    roundBalancing = true;
-    roundBalanceStartMs = millis();
-    roundLockedFace = FACE_UNKNOWN;
-
-    nusSend("OK ROUND START\n");
-    // сервер дальше сам пришлёт CLEAR/DRAW команды
-    return;
-  }
 
   // --------------------------------------- ROUND END (optional) ---------------------------------------
   if (upper.startsWith("ROUND END")) {
@@ -287,7 +357,7 @@ void handleCommand(const String &raw) {
 
   // CLEAR FACE TOP
   if (upper.startsWith("CLEAR FACE")) {
-    int idx = upper.indexOf(' ', 11); // after "CLEAR FACE"
+    int idx = upper.indexOf(' ', 11);  // after "CLEAR FACE"
     if (idx < 0) {
       nusSend("ERR BAD_FORMAT\n");
       return;
@@ -327,7 +397,7 @@ void handleCommand(const String &raw) {
       return;
     }
 
-    FaceId  face  = parseFace(tokens[2]);
+    FaceId face = parseFace(tokens[2]);
     ShapeId shape = parseShape(tokens[3]);
     ColorId color = parseColor(tokens[4]);
 
@@ -349,8 +419,8 @@ void handleCommand(const String &raw) {
     nusSend("OK DRAW SHAPE\n");
 
     if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
-        currentTargetFace = face;
-        audio_playEvent(AUDIO_ROUND_START);
+      currentTargetFace = face;
+      audio_playEvent(AUDIO_ROUND_START);
     }
 
     return;
@@ -371,16 +441,13 @@ void handleCommand(const String &raw) {
       }
     }
 
-    if (count != 6 ||
-        tokens[1] != "ARROW" ||
-        tokens[2] != "ON" ||
-        tokens[4] != "TOWARDS") {
+    if (count != 6 || tokens[1] != "ARROW" || tokens[2] != "ON" || tokens[4] != "TOWARDS") {
       nusSend("ERR BAD_FORMAT\n");
       return;
     }
 
     FaceId from = parseFace(tokens[3]);
-    FaceId to   = parseFace(tokens[5]);
+    FaceId to = parseFace(tokens[5]);
 
     if (from >= FACE_COUNT || to >= FACE_COUNT) {
       nusSend("ERR UNKNOWN_FACE\n");
@@ -411,12 +478,12 @@ void handleCommand(const String &raw) {
 
 // --------------------------------------- BLE callbacks ---------------------------------------
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer*) override {
+  void onConnect(BLEServer *) override {
     bleConnected = true;
-    nusSend("HELLO\n");   // optional, safe
+    nusSend("HELLO\n");  // optional, safe
   }
 
-  void onDisconnect(BLEServer*) override {
+  void onDisconnect(BLEServer *) override {
     bleConnected = false;
     if (auto *adv = BLEDevice::getAdvertising())
       adv->start();
@@ -444,7 +511,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
       line.trim();
 
       if (line.length()) {
-        handleCommand(line);   // <-- YOUR existing command logic
+        handleCommand(line);  // <-- YOUR existing command logic
       }
     }
   }
@@ -462,18 +529,18 @@ void setup() {
   // Init subsystems
   audio_init();
   initDisplay();
-  initImu();   // ← must match imu_control.h exactly
+  initImu();  // ← must match imu_control.h exactly
 
   // Face rotation compensation (adjust later if needed)
-  setFaceRotation(FACE_UP,    0);
-  setFaceRotation(FACE_DOWN,  0);
-  setFaceRotation(FACE_LEFT,  -1);
+  setFaceRotation(FACE_UP, 0);
+  setFaceRotation(FACE_DOWN, 0);
+  setFaceRotation(FACE_LEFT, -1);
   setFaceRotation(FACE_RIGHT, -2);
   setFaceRotation(FACE_FRONT, 0);
-  setFaceRotation(FACE_BACK,  0);
+  setFaceRotation(FACE_BACK, 0);
 
 
-/*
+  /*
  [0] FACE_UP    → PIN_LED_UP    (26)
  [1] FACE_DOWN  → PIN_LED_DOWN  (12)
  [2] FACE_LEFT  → PIN_LED_LEFT  (33)
@@ -485,7 +552,7 @@ void setup() {
 
   clearAllFaces();
 
-    // BLE init
+  // BLE init
   BLEDevice::init("ADHD Cube");
 
   BLEServer *server = BLEDevice::createServer();
@@ -495,15 +562,12 @@ void setup() {
 
   BLECharacteristic *rx = service->createCharacteristic(
     NUS_RX_UUID,
-    BLECharacteristic::PROPERTY_WRITE |
-    BLECharacteristic::PROPERTY_WRITE_NR
-  );
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
   rx->setCallbacks(new RxCallbacks());
 
   txChar = service->createCharacteristic(
     NUS_TX_UUID,
-    BLECharacteristic::PROPERTY_NOTIFY
-  );
+    BLECharacteristic::PROPERTY_NOTIFY);
   txChar->addDescriptor(new BLE2902());
 
   service->start();
@@ -521,61 +585,60 @@ void setup() {
 
 void loop() {
   // --- IMU update ---
-  updateImu();   // or imu_read(), whichever you already use
+  updateImu();  // or imu_read(), whichever you already use
 
   ImuState imu = getImuState();
-uint32_t now = millis();
-const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
+  uint32_t now = millis();
+  const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
 
-// --------------------------------------- Debug state print ---------------------------------------
-if (now - lastDebugPrintMs >= 5000) {   // once per second
-  lastDebugPrintMs = now;
+  // --------------------------------------- Debug state print ---------------------------------------
+  if (now - lastDebugPrintMs >= 5000) {  // once per second
+    lastDebugPrintMs = now;
 
-  uint32_t elapsedSec = 0;
-  uint32_t totalSec   = roundCfg.durationMs / 1000;
+    uint32_t elapsedSec = 0;
+    uint32_t totalSec = roundCfg.durationMs / 1000;
 
-  // round is playing ⇔ inRound && !roundBalancing
-  if (inRound && !roundBalancing) {
-    elapsedSec = (now - roundStartMs) / 1000;
-    if (elapsedSec > totalSec) elapsedSec = totalSec;
-  }
+    // round is playing ⇔ inRound && !roundBalancing
+    if (inRound && !roundBalancing) {
+      elapsedSec = (now - roundStartMs) / 1000;
+      if (elapsedSec > totalSec) elapsedSec = totalSec;
+    }
 
-  String dbg;
-  dbg.reserve(80);
-  dbg += elapsedSec;
-  dbg += "/";
-  dbg += totalSec;
-  dbg += " sec round have passed; game=";
-  dbg += (inGame ? "1" : "0");
-  dbg += ";round=";
-  dbg += (inRound ? "1" : "0");
-  dbg += ";balancing=";
-  dbg += (roundBalancing ? "1" : "0");
-  dbg += "; \n";
+    String dbg;
+    dbg.reserve(80);
+    dbg += elapsedSec;
+    dbg += "/";
+    dbg += totalSec;
+    dbg += " sec round have passed; game=";
+    dbg += (inGame ? "1" : "0");
+    dbg += ";round=";
+    dbg += (inRound ? "1" : "0");
+    dbg += ";balancing=";
+    dbg += (roundBalancing ? "1" : "0");
+    dbg += "; \n";
 
-  Serial.print(dbg);
-  nusSend(dbg.c_str());
+    Serial.print(dbg);
+    nusSend(dbg.c_str());
 
-  ImuState imu = getImuState();
-  Serial.print("ax=");
-  Serial.print(imu.ax);
-  Serial.print(" ay=");
-  Serial.print(imu.ay);
-  Serial.print(" az=");
-  Serial.print(imu.az);
+    ImuState imu = getImuState();
+    Serial.print("ax=");
+    Serial.print(imu.ax);
+    Serial.print(" ay=");
+    Serial.print(imu.ay);
+    Serial.print(" az=");
+    Serial.print(imu.az);
 
-  Serial.print("[IMU] upFace=");
-  Serial.print(faceToString(imu.upFace));
+    Serial.print("[IMU] upFace=");
+    Serial.print(parseFace(imu.upFace));
 
-  Serial.print("  tilt=");
-  Serial.print(imu.tiltPercent, 1);
+    Serial.print("  tilt=");
+    Serial.print(imu.tiltPercent, 1);
 
-  Serial.print("  valid=");
-  Serial.print(isValidUpFace() ? "Y" : "N");
+    Serial.print("  valid=");
+    Serial.print(isValidUpFace() ? "Y" : "N");
 
-  Serial.print("  locked=");
-  Serial.println(isFaceLocked() ? "Y" : "N");
-
+    Serial.print("  locked=");
+    Serial.println(isFaceLocked() ? "Y" : "N");
   }
   // --------------------------------------- Countdown overlay ---------------------------------------
   // Countdown is rendered as a 1-pixel border on the current active face.
@@ -585,21 +648,82 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
     updateCountdown(active);
   }
 
+  // ================== PAUSE ROUND ==================
+  if (pauseActive) {
 
-  // --------------------------------------- Balancing phase ---------------------------------------
+    // ---- BALANCE phase ----
+    // ================== PAUSE ROUND ==================
+    if (pauseActive) {
 
-  if (inRound && roundBalancing) {
+      // ---- BALANCE phase ----
+      if (pauseStartMs == 0 && !pauseWaitingForClear) {
 
-    // timeout
-    if (now - roundBalanceStartMs > 30000) {
-      nusSend("ROUND FAIL reason=NO_LOCK\n");
+        if (imu.upFace != FACE_UNKNOWN && isFaceLocked()) {
+
+          pauseFace = imu.upFace;
+          pauseWaitingForClear = true;   
+
+          nusSend(
+            String("ROUND BALANCE side=") + parseFace(pauseFace) + "\n"
+          );
+        }
+
+        return;  // block ALL other logic
+      }
+    }
+
+    // ---- ACTIVE phase ----
+    // any rotation = FAIL
+    if (pauseFace != FACE_UNKNOWN && pauseStartMs > 0 && imu.upFace != pauseFace) {
+      stopCountdown();
+      pauseActive = false;
       inRound = false;
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
-      stopCountdown();
 
+      nusSend(
+        String("END ROUND result=FAIL face=") + parseFace(pauseFace) + " reason=PAUSE_MOVE\n");
       return;
     }
+
+    // time elapsed = SUCCESS
+    if (pauseFace != FACE_UNKNOWN &&
+        pauseStartMs > 0 &&
+        millis() - pauseStartMs >= pauseDurationMs) {
+
+      stopCountdown();
+      pauseActive = false;
+      inRound = false;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+
+      nusSend(
+        String("END ROUND result=SUCCESS face=") + parseFace(pauseFace) + "\n");
+      return;
+    }
+  }
+
+  // --------------------------------------- Balancing phase ---------------------------------------
+
+if (inRound && roundBalancing) {
+
+  if (roundBalanceStartMs > 0 &&
+      now - roundBalanceStartMs > 30000 &&
+      imu.upFace != FACE_UNKNOWN) {
+
+    nusSend(
+      String("END ROUND result=FAIL face=")
+      + parseFace(imu.upFace)
+      + " reason=NO_LOCK\n"
+    );
+
+    inRound = false;
+    roundBalancing = false;
+    currentTargetFace = FACE_UNKNOWN;
+    stopCountdown();
+    return;
+  }
+
 
     if (isFaceLocked()) {
       FaceId locked = imu.upFace;
@@ -614,16 +738,37 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
 
       // Start the time-bound countdown border
       startCountdown(roundCfg.durationMs);
-      updateCountdown(locked); // render immediately on the locked face
+      updateCountdown(locked);  // render immediately on the locked face
+
 
       String msg = "ROUND BALANCE side=";
-      msg += faceToString(locked);
+      msg += parseFace(locked);
       msg += "\n";
       nusSend(msg);
     }
 
     return;
   }
+// --------------------------------------- Play phase (ARROW timeout) ---------------------------------------
+
+if (inRound && !roundBalancing && currentTargetFace != FACE_UNKNOWN) {
+
+  // play-phase timeout
+  if (now - roundStartMs > roundCfg.durationMs) {
+
+    stopCountdown();
+    inRound = false;
+    currentTargetFace = FACE_UNKNOWN;
+    nusSend(
+      String("END ROUND result=FAIL face=")
+      + parseFace(startFace)
+      + " reason=TIMEOUT\n"
+    );
+    return;
+  }
+
+  // (do NOT return here — let success logic run below)
+}
 
   // Only consider VALID faces
   if (!isValidUpFace()) {
@@ -638,65 +783,37 @@ if (now - lastDebugPrintMs >= 5000) {   // once per second
     upFaceSince = now;
   }
 
-  if (!hasLeftStartFace && imu.upFace != startFace) {
-    hasLeftStartFace = true;
+  if (currentTargetFace != FACE_UNKNOWN && hasLeftStartFace && imu.upFace != currentTargetFace && (now - upFaceSince) >= HOLD_TIME_MS) {
+
+    uint32_t elapsed = now - roundStartMs;
+
+    String msg = "END ROUND result=FAIL face=";
+    msg += parseFace(imu.upFace);
+    msg += " time=";
+    msg += elapsed;
+    msg += " reason=WRONG_FACE\n";
+
+    nusSend(msg.c_str());
+    stopCountdown();
+
+    currentTargetFace = FACE_UNKNOWN;
+    return;
   }
 
-  // Check round completion
-if (currentTargetFace != FACE_UNKNOWN &&
-    !roundBalancing &&
-    (now - roundStartMs) > roundCfg.durationMs) {
+  if (currentTargetFace != FACE_UNKNOWN && imu.upFace == currentTargetFace && (now - upFaceSince) >= HOLD_TIME_MS && pauseActive != true) {
 
-  uint32_t elapsed = now - roundStartMs;
+    uint32_t elapsed = now - roundStartMs;
 
-  String msg = "END ROUND result=FAIL face=";
-  msg += faceToString(imu.upFace);
-  msg += " time=";
-  msg += elapsed;
-  msg += " reason=TIMEOUT\n";
+    String msg = "END ROUND result=SUCCESS face=";
+    msg += parseFace(imu.upFace);
+    msg += " time=";
+    msg += elapsed;
+    msg += "\n";
 
-  nusSend(msg.c_str());
+    nusSend(msg.c_str());
+    stopCountdown();
 
-  currentTargetFace = FACE_UNKNOWN;
-  return;
-}
-
-if (currentTargetFace != FACE_UNKNOWN &&
-    hasLeftStartFace &&
-    imu.upFace != currentTargetFace &&
-    (now - upFaceSince) >= HOLD_TIME_MS) {
-
-  uint32_t elapsed = now - roundStartMs;
-
-  String msg = "END ROUND result=FAIL face=";
-  msg += faceToString(imu.upFace);
-  msg += " time=";
-  msg += elapsed;
-  msg += " reason=WRONG_FACE\n";
-
-  nusSend(msg.c_str());
-      stopCountdown();
-
-  currentTargetFace = FACE_UNKNOWN;
-  return;
-}
-
-if (currentTargetFace != FACE_UNKNOWN &&
-    imu.upFace == currentTargetFace &&
-    (now - upFaceSince) >= HOLD_TIME_MS) {
-
-  uint32_t elapsed = now - roundStartMs;
-
-  String msg = "END ROUND result=SUCCESS face=";
-  msg += faceToString(imu.upFace);
-  msg += " time=";
-  msg += elapsed;
-  msg += "\n";
-
-  nusSend(msg.c_str());
-      stopCountdown();
-
-  currentTargetFace = FACE_UNKNOWN;
-  return;
-}
+    currentTargetFace = FACE_UNKNOWN;
+    return;
+  }
 }
