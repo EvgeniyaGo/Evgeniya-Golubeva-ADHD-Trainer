@@ -10,6 +10,10 @@
 #include "imu_control.h"
 #include "audio.h"
 
+#include "soc/rtc_cntl_reg.h"
+
+
+
 #define HOLD_TIME_MS 400
 
 static FaceId currentTargetFace = FACE_UNKNOWN;
@@ -107,6 +111,7 @@ Vec3 faceNormal(FaceId f) {
     default: return { 0, 0, 0 };
   }
 }
+
 bool areFacesAdjacent(FaceId a, FaceId b) {
   if (a == FACE_UNKNOWN || b == FACE_UNKNOWN) return false;
   if (a == b) return false;
@@ -377,6 +382,17 @@ void handleCommand(const String &raw) {
     return;
   }
 
+  if (upper.startsWith("BEEP ")) {
+    uint16_t freq = 1000;
+    uint16_t dur  = 5000;
+
+    parseKeyValueInt(line, "freq", freq);
+    parseKeyValueInt(line, "dur", dur);
+
+    audio_playBeep(freq, dur);
+    nusSend("OK BEEP\n");
+    return;
+  }
 
   // Expected:
   // DRAW SHAPE FACE_TOP SHAPE_ARROW_LEFT COLOR_BLUE
@@ -420,7 +436,7 @@ void handleCommand(const String &raw) {
 
     if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
       currentTargetFace = face;
-      audio_playEvent(AUDIO_ROUND_START);
+//      audio_playEvent(AUDIO_ROUND_START);
     }
 
     return;
@@ -471,6 +487,7 @@ void handleCommand(const String &raw) {
     nusSend("OK DRAW ARROW\n");
     return;
   }
+
   nusSend("ERR UNKNOWN_CMD\n");
 }
 
@@ -521,37 +538,8 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 
 // --------------------------------------- setup / loop ---------------------------------------
 void setup() {
-  Serial.begin(115200);
-  Wire.begin(SDA_PIN, SCL_PIN);
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   delay(200);
-  Serial.println("[ESP] Cube display tester");
-
-  // Init subsystems
-  audio_init();
-  initDisplay();
-  initImu();  // ← must match imu_control.h exactly
-
-  // Face rotation compensation (adjust later if needed)
-  setFaceRotation(FACE_UP, 0);
-  setFaceRotation(FACE_DOWN, 0);
-  setFaceRotation(FACE_LEFT, -1);
-  setFaceRotation(FACE_RIGHT, -2);
-  setFaceRotation(FACE_FRONT, 0);
-  setFaceRotation(FACE_BACK, 0);
-
-
-  /*
- [0] FACE_UP    → PIN_LED_UP    (26)
- [1] FACE_DOWN  → PIN_LED_DOWN  (12)
- [2] FACE_LEFT  → PIN_LED_LEFT  (33)
- [3] FACE_RIGHT → PIN_LED_RIGHT (32)
- [4] FACE_BACK  → PIN_LED_BACK  (14)
- [5] FACE_FRONT → PIN_LED_FRONT (27)
-*/
-
-
-  clearAllFaces();
-
   // BLE init
   BLEDevice::init("ADHD Cube");
 
@@ -579,6 +567,41 @@ void setup() {
   adv->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
 
+//  Serial.println("[ESP] Cube display tester");
+
+  delay(800);
+  // Init subsystems
+  Serial.begin(115200);
+  Serial.println("[ESP] Cube booted on battery");
+  Wire.begin(SDA_PIN, SCL_PIN);
+  delay(200);
+  audio_init();
+  delay(200);
+  initDisplay();
+  delay(200);
+  initImu();  // ← must match imu_control.h exactly
+  delay(200);
+
+  // Face rotation compensation (adjust later if needed)
+  setFaceRotation(FACE_UP, 0);
+  setFaceRotation(FACE_DOWN, 0);
+  setFaceRotation(FACE_LEFT, -1);
+  setFaceRotation(FACE_RIGHT, -2);
+  setFaceRotation(FACE_FRONT, 0);
+  setFaceRotation(FACE_BACK, 0);
+
+
+  /*
+ [0] FACE_UP    → PIN_LED_UP    (26)
+ [1] FACE_DOWN  → PIN_LED_DOWN  (12)
+ [2] FACE_LEFT  → PIN_LED_LEFT  (33)
+ [3] FACE_RIGHT → PIN_LED_RIGHT (32)
+ [4] FACE_BACK  → PIN_LED_BACK  (14)
+ [5] FACE_FRONT → PIN_LED_FRONT (27)
+*/
+
+
+  clearAllFaces();
 
   Serial.println("[BLE] Advertising started");
 }

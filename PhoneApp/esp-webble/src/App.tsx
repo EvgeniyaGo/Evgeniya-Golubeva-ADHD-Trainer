@@ -46,19 +46,32 @@ export default function App() {
     PLAYING: "PLAYING",
   } as const;
   type RoundPhase = (typeof RoundPhase)[keyof typeof RoundPhase];
-  const [pendingRound, setPendingRound] = useState<{
-    from: FaceId;
-    to: FaceId;
-    arrow: string;
-  } | null>(null);
+  const [pendingRound, setPendingRound] = useState<PendingRound | null>(null);
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const [roundPhase, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
 type RoundType = "ARROW" | "PAUSE"; // later add "OPPOSITE"
 
 type PendingRound =
-  | { type: "ARROW"; from: FaceId; to: FaceId; arrow: ShapeId; duration: number; remaining: number }
+  | {
+      type: "ARROW";
+      mode?: "NORMAL" | "OPPOSITE";
+      from: FaceId;
+      to: FaceId;
+      arrow: ShapeId;
+      duration: number;
+      remaining: number;
+    }
   | { type: "PAUSE"; duration: number; remaining: number };
+
+  const oppositeFace: Record<FaceId, FaceId> = {
+  TOP: "BOTTOM",
+  BOTTOM: "TOP",
+  LEFT: "RIGHT",
+  RIGHT: "LEFT",
+  FRONT: "BACK",
+  BACK: "FRONT",
+};
 
   // refs
   const gattRef = useRef<GattStuff | null>(null);
@@ -107,7 +120,7 @@ type PendingRound =
       setStatus("connecting");
 
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [NUS_SERVICE] }],
+        filters: [{ namePrefix: "ADHD" }],
         optionalServices: [NUS_SERVICE],
       });
 
@@ -156,8 +169,27 @@ if (line.startsWith("ROUND BALANCE")) {
 
   if (round.type === "ARROW") {
     // draw arrow on balancedFace, and target on "to"
+    const intended = pendingRoundRef.current;
+    const isOpposite = intended?.type === "ARROW" && intended.mode === "OPPOSITE";
+    const visualTarget = isOpposite
+      ? oppositeFace[round.to]
+      : round.to;
+
+    // Arrow still drawn on balanced face, but points wrong
     await writeLine(`DRAW SHAPE ${balancedFace} ${round.arrow} COLOR_BLUE\n`);
-    await writeLine(`DRAW SHAPE ${round.to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`);
+
+    // Circle lies only in opposite mode
+    await writeLine(
+      `DRAW SHAPE ${visualTarget} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`
+    );
+    if (isOpposite) {
+      // deceptive / darker cue
+      await writeLine("BEEP freq=1000 dur=400\n");
+    } else {
+      // normal cue
+      await writeLine("BEEP freq=1200 dur=200\n");
+    }
+
   } else {
     // PAUSE: no arrow, no circle
     // countdown is handled by ESP firmware display_control on lock/start
@@ -311,19 +343,32 @@ const randInt = (min: number, max: number) =>
   Math.floor(min + Math.random() * (max - min + 1));
 
 function chooseNextRound(from: FaceId, remaining: number): PendingRound {
-  // 50/50 for now
   const choosePause = Math.random() < 0.5;
 
   if (choosePause) {
-    const duration = randInt(2000, 10000); // 2–10s
+    const duration = randInt(2000, 10000);
     return { type: "PAUSE", duration, remaining };
   }
 
   const options = adjacency[from];
   const to = options[Math.floor(Math.random() * options.length)];
   const arrow = arrowFromTo(from, to);
-  return { type: "ARROW", from, to, arrow, duration: roundDurationRef.current, remaining };
+
+  // 👇 NEW
+  const mode: "NORMAL" | "OPPOSITE" =
+    Math.random() < 0.5 ? "OPPOSITE" : "NORMAL";
+
+  return {
+    type: "ARROW",
+    mode, 
+    from,
+    to,
+    arrow,
+    duration: roundDurationRef.current,
+    remaining,
+  };
 }
+
 
 function roundStartLine(round: PendingRound): string {
   if (round.type === "PAUSE") {
@@ -364,11 +409,7 @@ const nextRound = chooseNextRound(from, remainingRoundsRef.current);
 console.log(`[SRV] NEXT ROUND type=${nextRound.type} remaining=${remainingRoundsRef.current}`);
 
 pendingRoundRef.current = nextRound;
-setPendingRound(
-  nextRound.type === "ARROW"
-    ? { from: nextRound.from, to: nextRound.to, arrow: nextRound.arrow }
-    : null
-);
+setPendingRound(nextRound);
 
 setRoundPhase(RoundPhase.WAIT_BALANCE);
 roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
@@ -416,7 +457,8 @@ if (upper.startsWith("ROUND START")) {
   if (params.type === "PAUSE") {
     const round: PendingRound = { type: "PAUSE", duration, remaining };
     pendingRoundRef.current = round;
-    setPendingRound(null);
+//    setPendingRound(null);
+  setPendingRound(round);
     setRoundPhase(RoundPhase.WAIT_BALANCE);
     roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
   }
@@ -426,9 +468,9 @@ if (upper.startsWith("ROUND START")) {
     const to = params.to as FaceId;
     const arrow = arrowFromTo(from, to);
 
-    const round: PendingRound = { type: "ARROW", from, to, arrow, duration, remaining };
+    const round: PendingRound = { type: "ARROW", mode: "NORMAL", from, to, arrow, duration, remaining };
     pendingRoundRef.current = round;
-    setPendingRound({ from, to, arrow });
+setPendingRound(round);
     setRoundPhase(RoundPhase.WAIT_BALANCE);
     roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
   }
@@ -459,6 +501,7 @@ if (upper.startsWith("ROUND START")) {
 // Store intent, DO NOT DRAW YET (manual ARROW round)
 const round: PendingRound = {
   type: "ARROW",
+  mode: "NORMAL",
   from,
   to,
   arrow,
@@ -469,7 +512,7 @@ const round: PendingRound = {
 pendingRoundRef.current = round;
 
 // UI arrow preview ONLY
-setPendingRound({ from, to, arrow });
+setPendingRound(round);
 
       // Ask ESP to start balancing for next round
       await writeLine(
@@ -614,11 +657,7 @@ const handleRoundFail = useCallback(
 const nextRound = chooseNextRound(data.face, remainingRoundsRef.current);
 
 pendingRoundRef.current = nextRound;
-setPendingRound(
-  nextRound.type === "ARROW"
-    ? { from: nextRound.from, to: nextRound.to, arrow: nextRound.arrow }
-    : null
-);
+setPendingRound(nextRound);
 
 roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
 setRoundPhase(RoundPhase.WAIT_BALANCE);
@@ -654,7 +693,7 @@ const round: PendingRound = {
 pendingRoundRef.current = round;
 
 // UI arrow preview ONLY
-setPendingRound({ from, to, arrow });
+setPendingRound(round);
 
     // Tell ESP to start balancing
     await writeLine(

@@ -96,3 +96,18 @@ void audio_playEvent(AudioEvent e) {
       break;
   }
 }
+
+bool parseKeyValueInt(const String &cmd, const char *key, uint16_t &out) {
+  String k = String(key) + "=";
+  int idx = cmd.indexOf(k);
+  if (idx < 0) return false;
+
+  idx += k.length();
+  int end = idx;
+  while (end < cmd.length() && isDigit(cmd[end])) {
+    end++;
+  }
+
+  out = cmd.substring(idx, end).toInt();
+  return true;
+}
