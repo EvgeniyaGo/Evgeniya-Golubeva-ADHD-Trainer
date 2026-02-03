@@ -294,13 +294,22 @@ void handleCommand(const String &raw) {
       FaceId from = parseFace(fromStr);
       FaceId to = parseFace(toStr);
 
+      // NEW: expected override
+      String expectedStr = kvGet(upper, "EXPECTED");
+      if (expectedStr.length()) {
+        currentTargetFace = parseFace(expectedStr);
+      } else {
+        // fallback = NORMAL behavior
+        currentTargetFace = to;
+      }
+
+      roundCfg.durationMs = durStr.toInt();
+
       if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) {
         nusSend("ERR BAD FACE\n");
         return;
       }
 
-      currentTargetFace = to;
-      roundCfg.durationMs = durStr.toInt();
       inRound = true;
       roundBalancing = true;
       pauseActive = false;
@@ -434,10 +443,10 @@ void handleCommand(const String &raw) {
     mapToDisplay(face, shape, color, DISPLAY_STATIC);
     nusSend("OK DRAW SHAPE\n");
 
-    if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
-      currentTargetFace = face;
+//    if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
+//      currentTargetFace = face;
 //      audio_playEvent(AUDIO_ROUND_START);
-    }
+//    }
 
     return;
   }

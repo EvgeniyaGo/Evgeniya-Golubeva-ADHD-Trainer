@@ -171,16 +171,17 @@ if (line.startsWith("ROUND BALANCE")) {
     // draw arrow on balancedFace, and target on "to"
     const intended = pendingRoundRef.current;
     const isOpposite = intended?.type === "ARROW" && intended.mode === "OPPOSITE";
-    const visualTarget = isOpposite
-      ? oppositeFace[round.to]
-      : round.to;
+//    const visualTarget = isOpposite
+//      ? oppositeFace[round.to]
+//      : round.to;
 
     // Arrow still drawn on balanced face, but points wrong
     await writeLine(`DRAW SHAPE ${balancedFace} ${round.arrow} COLOR_BLUE\n`);
 
     // Circle lies only in opposite mode
     await writeLine(
-      `DRAW SHAPE ${visualTarget} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`
+//      `DRAW SHAPE ${visualTarget} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`
+      `DRAW SHAPE ${round.to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`
     );
     if (isOpposite) {
       // deceptive / darker cue
@@ -374,7 +375,16 @@ function roundStartLine(round: PendingRound): string {
   if (round.type === "PAUSE") {
     return `ROUND START type=PAUSE duration=${round.duration} remaining=${round.remaining}\n`;
   }
-  return `ROUND START type=ARROW from=${round.from} to=${round.to} duration=${round.duration} remaining=${round.remaining}\n`;
+
+  // ARROW
+  const isOpposite =
+    round.type === "ARROW" && round.mode === "OPPOSITE";
+
+  const expected = isOpposite
+    ? oppositeFace[round.to]
+    : round.to;
+
+  return `ROUND START type=ARROW from=${round.from} to=${round.to} expected=${expected} duration=${round.duration} remaining=${round.remaining}\n`;
 }
   
 
