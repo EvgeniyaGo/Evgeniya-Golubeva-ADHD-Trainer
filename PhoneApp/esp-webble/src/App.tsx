@@ -231,6 +231,32 @@ export default function App() {
               continue;
             }
 
+            if (line.startsWith("OK GAME START")) {
+              const parts = line.split(/\s+/);
+              const facePart = parts.find(p => p.toLowerCase().startsWith("face="));
+              if (!facePart) return;
+
+              const startFace = facePart.split("=")[1] as FaceId;
+
+              console.log("[SRV] GAME START anchored on", startFace);
+
+              // Start first round from THIS face
+              const firstRound = chooseNextRound(
+                startFace,
+                remainingRoundsRef.current
+              );
+
+              pendingRoundRef.current = firstRound;
+              setPendingRound(firstRound);
+
+              roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+              setRoundPhase(RoundPhase.WAIT_BALANCE);
+
+              await writeLine(roundStartLine(firstRound));
+              return;
+            }
+
+
             // ───────────────── PONG ─────────────────
             if (line.startsWith("PONG ")) {
               const seqStr = line.substring(5).trim();
@@ -441,6 +467,7 @@ export default function App() {
         roundPhaseRef.current = RoundPhase.IDLE;
         pendingRoundRef.current = null;
         setPendingRound(null);
+        await writeLine("GAME END\n");
         return;
       }
 
@@ -490,6 +517,40 @@ export default function App() {
       setCommand("");
       return;
     }
+// ── INTERCEPT GAME START (AUTHORITATIVE) ───────────────
+  if (upper.startsWith("GAME START")) {
+    const params = Object.fromEntries(
+      upper.split(/\s+/).slice(2).map(p => {
+        const [k, v] = p.split("=");
+        return [k.toLowerCase(), v];
+      })
+    );
+
+    const remaining = params.remaining
+      ? Number(params.remaining)
+      : 1;
+
+    const duration = params.duration
+      ? Number(params.duration)
+      : roundDurationRef.current;
+
+    // 🔑 Store server-owned state
+    remainingRoundsRef.current = remaining;
+    roundDurationRef.current = duration;
+
+    console.log(
+      "[SRV] GAME START remaining=",
+      remaining,
+      "duration=",
+      duration
+    );
+
+    // Forward simplified command to ESP
+    await writeLine("GAME START type=SIMON\n");
+
+    setCommand("");
+    return;
+  }
 
     // ── INTERCEPT ROUND START (AUTHORITATIVE) ───────────
     if (upper.startsWith("ROUND START")) {
@@ -694,6 +755,7 @@ export default function App() {
         setRoundPhase(RoundPhase.IDLE);
         pendingRoundRef.current = null;
         setPendingRound(null);
+        await writeLine("GAME END\n");
         return;
       }
 

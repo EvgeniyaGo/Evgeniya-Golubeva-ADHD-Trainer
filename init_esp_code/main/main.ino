@@ -17,6 +17,7 @@
 #define HOLD_TIME_MS 400
 
 static FaceId currentTargetFace = FACE_UNKNOWN;
+ImuState imu;
 
 // hold detection
 static FaceId stableFace = FACE_UNKNOWN;
@@ -244,9 +245,14 @@ void handleCommand(const String &raw) {
   upper.toUpperCase();
   // GAME START game=SIMONSAYS
   if (upper.startsWith("GAME START")) {
-    resetGameState();
     inGame = true;
-    nusSend("OK GAME START\n");
+    inRound = false;
+    roundBalancing = false;
+    currentTargetFace = FACE_UNKNOWN;
+
+    nusSend(
+      String("OK GAME START face=") + parseFace(imu.upFace) + "\n"
+    );
     return;
   }
   // ---------------- PAUSE ROUND ----------------
@@ -596,7 +602,7 @@ void setup() {
   setFaceRotation(FACE_DOWN, 0);
   setFaceRotation(FACE_LEFT, -1);
   setFaceRotation(FACE_RIGHT, -2);
-  setFaceRotation(FACE_FRONT, 0);
+  setFaceRotation(FACE_FRONT, 2);
   setFaceRotation(FACE_BACK, 0);
 
 
@@ -619,7 +625,7 @@ void loop() {
   // --- IMU update ---
   updateImu();  // or imu_read(), whichever you already use
 
-  ImuState imu = getImuState();
+  imu = getImuState();
   uint32_t now = millis();
   const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
 
