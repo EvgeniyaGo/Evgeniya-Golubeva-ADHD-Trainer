@@ -706,7 +706,7 @@ void loop() {
 
     // ---- ACTIVE phase ----
     // any rotation = FAIL
-    if (pauseFace != FACE_UNKNOWN && pauseStartMs > 0 && imu.upFace != pauseFace) {
+    if (imu.upFace != FACE_UNKNOWN && pauseStartMs > 0 && imu.upFace != pauseFace) {
       stopCountdown();
       pauseActive = false;
       inRound = false;
@@ -714,7 +714,7 @@ void loop() {
       currentTargetFace = FACE_UNKNOWN;
 
       nusSend(
-        String("END ROUND result=FAIL face=") + parseFace(pauseFace) + " reason=PAUSE_MOVE\n");
+        String("END ROUND result=FAIL face=") + parseFace(imu.upFace) + " reason=PAUSE_MOVE\n");
       return;
     }
 
