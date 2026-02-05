@@ -338,6 +338,7 @@ void renderFace(FaceId face) {
 }
 
 void startCountdown(uint32_t durationMs) {
+  if (countdownActive) return;
   countdownActive = true;
   countdownStartTime = millis();
   countdownDuration = durationMs;

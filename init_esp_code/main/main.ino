@@ -240,7 +240,65 @@ static bool kvBool(const String &v) {
 FaceId startFace = FACE_UNKNOWN;
 bool hasLeftStartFace = false;
 
-// --------- // --------------------------------------- Command handler ---------------------------------------
+
+
+static uint32_t lastTick = 0;
+static int32_t countdownMs = 10000;   // start at 10s
+static int8_t dir = -1;               // -1 = down, +1 = up
+static bool goingDown = true;
+static uint32_t lastRestart = 0;
+static FaceId countdownOwnerFace = FACE_UNKNOWN;
+
+struct PendingBleRoundStart {
+  bool active = false;
+  FaceId face = FACE_UNKNOWN;
+};
+
+static PendingBleRoundStart pendingRoundStart;
+
+struct PendingBleTx {
+  bool active = false;
+  String msg;
+};
+
+// ================= DISPLAY INTENT QUEUE =================
+
+enum PendingDisplayAction {
+  DISP_NONE,
+  DISP_CLEAR_ALL,
+  DISP_CLEAR_FACE,
+  DISP_DRAW_SHAPE,
+  DISP_DRAW_ARROW
+};
+
+struct PendingDisplay {
+  PendingDisplayAction action = DISP_NONE;
+  FaceId face = FACE_UNKNOWN;
+  ShapeId shape = SHAPE_COUNT;
+  ColorId color = COLOR_COUNT;
+  FaceId from = FACE_UNKNOWN;
+  FaceId to = FACE_UNKNOWN;
+};
+
+static PendingDisplay pendingDisplay;
+
+static PendingBleTx bleTx;
+
+enum PendingCountdownAction {
+  CD_NONE,
+  CD_START,
+  CD_STOP
+};
+
+struct PendingCountdown {
+  PendingCountdownAction action = CD_NONE;
+  uint32_t durationMs = 0;
+};
+
+static PendingCountdown pendingCountdown;
+
+
+// --------------------------------------- Command handler ---------------------------------------
 void handleCommand(const String &raw) {
   String line = raw;
   line.trim();
@@ -248,77 +306,84 @@ void handleCommand(const String &raw) {
 
   String upper = line;
   upper.toUpperCase();
-  // GAME START game=SIMONSAYS
+
+  // ================= GAME START =================
   if (upper.startsWith("GAME START")) {
     inGame = true;
     inRound = false;
     roundBalancing = false;
     currentTargetFace = FACE_UNKNOWN;
 
-    nusSend(
-      String("OK GAME START face=") + parseFace(imu.upFace) + "\n"
-    );
+    bleTx.active = true;
+    bleTx.msg =
+      String("OK GAME START face=")
+      + parseFace(imu.upFace)
+      + "\n";
     return;
   }
-  // ---------------- PAUSE ROUND ----------------
-  if (upper .startsWith("ROUND START")) {
 
-    // Check if this is PAUSE
-    if (upper .indexOf("TYPE=PAUSE") >= 0) {
+  // ================= ROUND START =================
+  if (upper.startsWith("ROUND START")) {
 
-      // Default duration
+    // -------- PAUSE --------
+    if (upper.indexOf("TYPE=PAUSE") >= 0) {
+
       pauseDurationMs = 5000;
-
-      int dIdx = upper.indexOf("DURATION=");
-      if (dIdx >= 0) {
-        int start = dIdx + 9;
-        int end = upper.indexOf(' ', start);
-        if (end < 0) end = upper.length();
-        pauseDurationMs = upper.substring(start, end).toInt();
+      String durStr = kvGet(upper, "DURATION");
+      if (durStr.length()) {
+        pauseDurationMs = durStr.toInt();
       }
 
       pauseActive = true;
       pauseFace = FACE_UNKNOWN;
       pauseStartMs = 0;
+      pauseWaitingForClear = false;
 
       inRound = true;
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
 
-      clearAllFaces();
-      stopCountdown();
+      pendingCountdown.action = CD_STOP;
+      pendingDisplay.action = DISP_CLEAR_ALL;
 
-      nusSend("OK ROUND START\n");
-      return;  // CRITICAL: no fallthrough
+      bleTx.active = true;
+      bleTx.msg = "OK ROUND START\n";
+      return;
     }
-    if (upper.indexOf("TYPE=ARROW") >= 0) {
+
+    // -------- ARROW / SIMON --------
+    if (upper.indexOf("TYPE=ARROW") >= 0 ||
+        upper.indexOf("TYPE=SIMON") >= 0) {
 
       String fromStr = kvGet(upper, "FROM");
-      String toStr = kvGet(upper, "TO");
-      String durStr = kvGet(upper, "DURATION");
+      String toStr   = kvGet(upper, "TO");
+      String durStr  = kvGet(upper, "DURATION");
 
-      if (!fromStr.length() || !toStr.length() || !durStr.length()) {
-        nusSend("ERR BAD ARROW PARAMS\n");
+      if (!durStr.length()) {
+        bleTx.active = true;
+        bleTx.msg = "ERR MISSING DURATION\n";
         return;
-      }
-
-      FaceId from = parseFace(fromStr);
-      FaceId to = parseFace(toStr);
-
-      // NEW: expected override
-      String expectedStr = kvGet(upper, "EXPECTED");
-      if (expectedStr.length()) {
-        currentTargetFace = parseFace(expectedStr);
-      } else {
-        // fallback = NORMAL behavior
-        currentTargetFace = to;
       }
 
       roundCfg.durationMs = durStr.toInt();
 
-      if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) {
-        nusSend("ERR BAD FACE\n");
+      FaceId from = parseFace(fromStr);
+      FaceId to   = parseFace(toStr);
+
+      if ((fromStr.length() && from == FACE_UNKNOWN) ||
+          (toStr.length()   && to   == FACE_UNKNOWN)) {
+        bleTx.active = true;
+        bleTx.msg = "ERR BAD FACE\n";
         return;
+      }
+
+      String expectedStr = kvGet(upper, "EXPECTED");
+      if (expectedStr.length()) {
+        currentTargetFace = parseFace(expectedStr);
+      } else if (to != FACE_UNKNOWN) {
+        currentTargetFace = to;
+      } else {
+        currentTargetFace = FACE_UNKNOWN;
       }
 
       inRound = true;
@@ -326,96 +391,82 @@ void handleCommand(const String &raw) {
       pauseActive = false;
       roundBalanceStartMs = millis();
 
-      nusSend("OK ROUND START\n");
+      pendingRoundStart.active = true;
+      pendingRoundStart.face =
+        (from != FACE_UNKNOWN) ? from : imu.upFace;
+
+      pendingCountdown.action = CD_START;
+      pendingCountdown.durationMs = roundCfg.durationMs;
+
+      bleTx.active = true;
+      bleTx.msg = "OK ROUND START\n";
       return;
     }
 
-    nusSend("ERR UNKNOWN ROUND TYPE\n");
+    bleTx.active = true;
+    bleTx.msg = "ERR UNKNOWN ROUND TYPE\n";
     return;
   }
 
-
-  // GAME END
-  if (upper == "GAME END") {
+  // ================= GAME END =================
+  if (upper == "GAME END" || upper == "GAME 0") {
     resetGameState();
-    nusSend("OK GAME END\n");
+
+    pendingCountdown.action = CD_STOP;
+    pendingDisplay.action = DISP_CLEAR_ALL;
+
+    bleTx.active = true;
+    bleTx.msg = "OK GAME END\n";
     return;
   }
 
-  // --------------------------------------- Aliases for current UI ---------------------------------------
-  // Your UI sends: "GAME 1" / "GAME 0
   if (upper == "GAME 1") {
     resetGameState();
     inGame = true;
-    nusSend("OK GAME START\n");
-    return;
-  }
-  if (upper == "GAME 0") {
-    resetGameState();
-    nusSend("OK GAME END\n");
+
+    bleTx.active = true;
+    bleTx.msg = "OK GAME START\n";
     return;
   }
 
+  // ================= CLEAR ALL =================
   if (upper.startsWith("CLEAR ALL")) {
-    clearAllFaces();
-    nusSend("OK CLEAR ALL\n");
+    pendingDisplay.action = DISP_CLEAR_ALL;
 
-  if (pauseActive && pauseWaitingForClear) {
-    pauseWaitingForClear = false;
-    pauseStartMs = millis();
-    startCountdown(pauseDurationMs);
-  }
+    if (pauseActive && pauseWaitingForClear) {
+      pauseWaitingForClear = false;
+      pauseStartMs = millis();
 
-    return;
-  }
-
-
-  // --------------------------------------- ROUND END (optional) ---------------------------------------
-  if (upper.startsWith("ROUND END")) {
-    inRound = false;
-    roundBalancing = false;
-    currentTargetFace = FACE_UNKNOWN;
-    nusSend("OK ROUND END\n");
-    return;
-  }
-
-
-  // CLEAR FACE TOP
-  if (upper.startsWith("CLEAR FACE")) {
-    int idx = upper.indexOf(' ', 11);  // after "CLEAR FACE"
-    if (idx < 0) {
-      nusSend("ERR BAD_FORMAT\n");
-      return;
+      pendingCountdown.action = CD_START;
+      pendingCountdown.durationMs = pauseDurationMs;
     }
 
-    String faceStr = upper.substring(11);
+    bleTx.active = true;
+    bleTx.msg = "OK CLEAR ALL\n";
+    return;
+  }
+
+  // ================= CLEAR FACE =================
+  if (upper.startsWith("CLEAR FACE")) {
+    String faceStr = upper.substring(10);
     faceStr.trim();
 
     FaceId face = parseFace(faceStr);
     if (face == FACE_UNKNOWN) {
-      nusSend("ERR UNKNOWN_FACE\n");
+      bleTx.active = true;
+      bleTx.msg = "ERR UNKNOWN_FACE\n";
       return;
     }
 
-    clearFace(face);
-    nusSend("OK CLEAR FACE\n");
+    pendingDisplay.action = DISP_CLEAR_FACE;
+    pendingDisplay.face = face;
+
+    bleTx.active = true;
+    bleTx.msg = "OK CLEAR FACE\n";
     return;
   }
 
-  if (upper.startsWith("BEEP ")) {
-    uint16_t freq = 1000;
-    uint16_t dur  = 5000;
-
-    parseKeyValueInt(line, "freq", freq);
-    parseKeyValueInt(line, "dur", dur);
-
-    audio_playBeep(freq, dur);
-    nusSend("OK BEEP\n");
-    return;
-  }
-
-  // Expected:
-  // DRAW SHAPE FACE_TOP SHAPE_ARROW_LEFT COLOR_BLUE
+  // ================= DRAW SHAPE =================
   if (upper.startsWith("DRAW SHAPE ")) {
     String tokens[5];
     uint8_t count = 0;
@@ -429,89 +480,73 @@ void handleCommand(const String &raw) {
     }
 
     if (count != 5) {
-      nusSend("ERR BAD_DRAW_FORMAT\n");
+      bleTx.active = true;
+      bleTx.msg = "ERR BAD_DRAW_FORMAT\n";
       return;
     }
 
-    FaceId face = parseFace(tokens[2]);
+    FaceId face   = parseFace(tokens[2]);
     ShapeId shape = parseShape(tokens[3]);
     ColorId color = parseColor(tokens[4]);
 
-    if (face >= FACE_COUNT) {
-      nusSend("ERR UNKNOWN_FACE\n");
-      return;
-    }
-    if (shape >= SHAPE_COUNT) {
-      nusSend("ERR UNKNOWN_SHAPE\n");
-      return;
-    }
-    if (color >= COLOR_COUNT) {
-      nusSend("ERR UNKNOWN_COLOR\n");
+    if (face >= FACE_COUNT || shape >= SHAPE_COUNT || color >= COLOR_COUNT) {
+      bleTx.active = true;
+      bleTx.msg = "ERR BAD_DRAW_ARGS\n";
       return;
     }
 
-    clearFace(face);
-    mapToDisplay(face, shape, color, DISPLAY_STATIC);
-    nusSend("OK DRAW SHAPE\n");
+    pendingDisplay.action = DISP_DRAW_SHAPE;
+    pendingDisplay.face = face;
+    pendingDisplay.shape = shape;
+    pendingDisplay.color = color;
 
-//    if (shape == SHAPE_CIRCLE_6X6 && color == COLOR_GREEN) {
-//      currentTargetFace = face;
-//      audio_playEvent(AUDIO_ROUND_START);
-//    }
-
+    bleTx.active = true;
+    bleTx.msg = "OK DRAW SHAPE\n";
     return;
   }
 
-  // Expected:
-  // DRAW ARROW ON FACE_TOP TOWARDS FACE_LEFT
+  // ================= DRAW ARROW =================
   if (upper.startsWith("DRAW ")) {
 
-    String tokens[8];
+    String tokens[6];
     uint8_t count = 0;
 
     int start = 0;
     for (int i = 0; i <= upper.length(); i++) {
       if (i == upper.length() || upper[i] == ' ') {
-        if (count < 8) tokens[count++] = upper.substring(start, i);
+        if (count < 6) tokens[count++] = upper.substring(start, i);
         start = i + 1;
       }
     }
 
     if (count != 6 || tokens[1] != "ARROW" || tokens[2] != "ON" || tokens[4] != "TOWARDS") {
-      nusSend("ERR BAD_FORMAT\n");
+      bleTx.active = true;
+      bleTx.msg = "ERR BAD_FORMAT\n";
       return;
     }
 
     FaceId from = parseFace(tokens[3]);
-    FaceId to = parseFace(tokens[5]);
-
-    if (from >= FACE_COUNT || to >= FACE_COUNT) {
-      nusSend("ERR UNKNOWN_FACE\n");
-      return;
-    }
+    FaceId to   = parseFace(tokens[5]);
 
     if (!areFacesAdjacent(from, to)) {
-      nusSend("ERR UNREACHABLE\n");
+      bleTx.active = true;
+      bleTx.msg = "ERR UNREACHABLE\n";
       return;
     }
 
-    ShapeId arrow;
-    if (!arrowFromTo(from, to, arrow)) {
-      nusSend("ERR UNREACHABLE\n");
-      return;
-    }
+    pendingDisplay.action = DISP_DRAW_ARROW;
+    pendingDisplay.from = from;
+    pendingDisplay.to = to;
 
-    clearAllFaces();
-    mapToDisplay(from, arrow, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(to, SHAPE_CIRCLE_6X6, COLOR_GREEN, DISPLAY_STATIC);
-    nusSend("OK DRAW ARROW\n");
+    bleTx.active = true;
+    bleTx.msg = "OK DRAW ARROW\n";
     return;
   }
 
-  nusSend("ERR UNKNOWN_CMD\n");
+  // ================= UNKNOWN =================
+  bleTx.active = true;
+  bleTx.msg = "ERR UNKNOWN_CMD\n";
 }
-
-
 
 // --------------------------------------- BLE callbacks ---------------------------------------
 class ServerCallbacks : public BLEServerCallbacks {
@@ -553,14 +588,6 @@ class RxCallbacks : public BLECharacteristicCallbacks {
     }
   }
 };
-
-static uint32_t lastTick = 0;
-static int32_t countdownMs = 10000;   // start at 10s
-static int8_t dir = -1;               // -1 = down, +1 = up
-static bool goingDown = true;
-static uint32_t lastRestart = 0;
-static FaceId countdownOwnerFace = FACE_UNKNOWN;
-
 
 
 // --------------------------------------- setup / loop ---------------------------------------
@@ -668,27 +695,257 @@ void updateCountdownOwner(const ImuState& imu) {
   }
 }
 
+// Called from BLE RX when frontend says "ROUND START"
+void onBleRoundStart(FaceId requestedFace) {
+  pendingRoundStart.active = true;
+  pendingRoundStart.face = requestedFace;
+}
 
 void loop() {
+  // ---------------- IMU ----------------
   updateImu();
   ImuState imu = getImuState();
 
-  // --- EXISTING game logic stays as-is ---
-  // (pause, balancing, success/fail, etc.)
+  uint32_t now = millis();
 
-  // --- NEW: decide who owns the countdown face ---
+  // ---------------- Debug prints ----------------
+  if (now - lastDebugPrintMs >= 5000) {
+    lastDebugPrintMs = now;
+
+    Serial.print("[DBG] inGame=");
+    Serial.print(inGame);
+    Serial.print(" inRound=");
+    Serial.print(inRound);
+    Serial.print(" balancing=");
+    Serial.print(roundBalancing);
+    Serial.print(" pause=");
+    Serial.println(pauseActive);
+
+    Serial.print("[IMU] upFace=");
+    Serial.print(parseFace(imu.upFace));
+    Serial.print(" tilt=");
+    Serial.println(imu.tiltPercent, 1);
+  }
+
+  // ======================================================
+  // ========== APPLY PENDING BLE ROUND START =============
+  // ======================================================
+  if (pendingRoundStart.active) {
+
+    inRound = true;
+    roundBalancing = true;
+    pauseActive = false;
+
+    roundLockedFace = pendingRoundStart.face;
+    currentTargetFace = pendingRoundStart.face;
+
+    countdownOwnerFace = pendingRoundStart.face;
+
+    pendingCountdown.action = CD_START;
+    pendingCountdown.durationMs = roundCfg.durationMs;
+    roundStartMs = now;
+
+    bleTx.active = true;
+    bleTx.msg =
+      String("ROUND BALANCE side=")
+      + parseFace(roundLockedFace)
+      + "\n";
+
+    pendingRoundStart.active = false;
+  }
+
+  // ======================================================
+  // ================== PAUSE LOGIC =======================
+  // ======================================================
+  if (pauseActive) {
+
+    // ---- pause balance ----
+    if (pauseStartMs == 0 && !pauseWaitingForClear) {
+
+      if (imu.upFace != FACE_UNKNOWN && isFaceLocked()) {
+        pauseFace = imu.upFace;
+        pauseWaitingForClear = true;
+
+        countdownOwnerFace = pauseFace;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("ROUND BALANCE side=")
+          + parseFace(pauseFace)
+          + "\n";
+      }
+
+      goto render_tail;
+    }
+
+    // ---- pause moved -> FAIL ----
+    if (imu.upFace != FACE_UNKNOWN &&
+        pauseStartMs > 0 &&
+        imu.upFace != pauseFace) {
+
+        pendingCountdown.action = CD_STOP;
+
+
+      pauseActive = false;
+      inRound = false;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+
+      bleTx.active = true;
+      bleTx.msg =
+        String("END ROUND result=FAIL face=")
+        + parseFace(imu.upFace)
+        + " reason=PAUSE_MOVE\n";
+
+      goto render_tail;
+    }
+
+    // ---- pause success ----
+    if (pauseFace != FACE_UNKNOWN &&
+        pauseStartMs > 0 &&
+        now - pauseStartMs >= pauseDurationMs) {
+
+        pendingCountdown.action = CD_STOP;
+
+      pauseActive = false;
+      inRound = false;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+
+      bleTx.active = true;
+      bleTx.msg =
+        String("END ROUND result=SUCCESS face=")
+        + parseFace(pauseFace)
+        + "\n";
+
+      goto render_tail;
+    }
+  }
+
+  // ======================================================
+  // ============ FAKE ROUND ENGINE =======================
+  // ======================================================
+  if (inRound && !pauseActive) {
+
+    // ---- fake balancing completes immediately ----
+    if (roundBalancing) {
+      roundBalancing = false;
+
+      bleTx.active = true;
+      bleTx.msg =
+        String("ROUND BALANCE side=")
+        + parseFace(roundLockedFace)
+        + "\n";
+    }
+
+    // ---- fake success after 1.5s ----
+    if (!roundBalancing &&
+        now - roundStartMs >= 1500) {
+
+      bleTx.active = true;
+      bleTx.msg =
+        String("END ROUND result=SUCCESS face=")
+        + parseFace(roundLockedFace)
+        + "\n";
+
+        pendingCountdown.action = CD_STOP;
+
+      inRound = false;
+      currentTargetFace = FACE_UNKNOWN;
+    }
+  }
+
+  // ================= COUNTDOWN LIFECYCLE =================
+if (pendingCountdown.action != CD_NONE) {
+
+  if (pendingCountdown.action == CD_STOP) {
+    stopCountdown();
+  }
+
+  if (pendingCountdown.action == CD_START) {
+    startCountdown(pendingCountdown.durationMs);
+  }
+
+  pendingCountdown.action = CD_NONE;
+}
+
+
+// ================= DISPLAY LIFECYCLE =================
+if (pendingDisplay.action != DISP_NONE) {
+
+  switch (pendingDisplay.action) {
+
+    case DISP_CLEAR_ALL:
+      clearAllFaces();
+      break;
+
+    case DISP_CLEAR_FACE:
+      clearFace(pendingDisplay.face);
+      break;
+
+    case DISP_DRAW_SHAPE:
+      clearFace(pendingDisplay.face);
+      mapToDisplay(
+        pendingDisplay.face,
+        pendingDisplay.shape,
+        pendingDisplay.color,
+        DISPLAY_STATIC
+      );
+      break;
+
+    case DISP_DRAW_ARROW: {
+      ShapeId arrow;
+      if (arrowFromTo(pendingDisplay.from, pendingDisplay.to, arrow)) {
+        clearAllFaces();
+        mapToDisplay(
+          pendingDisplay.from,
+          arrow,
+          COLOR_BLUE,
+          DISPLAY_STATIC
+        );
+        mapToDisplay(
+          pendingDisplay.to,
+          SHAPE_CIRCLE_6X6,
+          COLOR_GREEN,
+          DISPLAY_STATIC
+        );
+      }
+      break;
+    }
+
+    default:
+      break;
+  }
+
+  pendingDisplay.action = DISP_NONE;
+}
+
+  // ======================================================
+  // ================= RENDER TAIL ========================
+  // ======================================================
+render_tail:
+
+  // decide ownership (only if free)
   updateCountdownOwner(imu);
 
-  // --- Update countdown timing ---
+  // advance countdown timing
   updateCountdown(countdownOwnerFace);
 
-  // --- Render exactly once ---
+  // render exactly once
   if (countdownOwnerFace != FACE_UNKNOWN) {
     renderFace(countdownOwnerFace);
   }
 
-  delay(20);
+  // ---------------- BLE TX (AFTER render) ----------------
+  if (bleTx.active) {
+    nusSend(bleTx.msg.c_str());
+    bleTx.active = false;
+  }
+
+  delay(20);   // stable frame pacing
 }
+
+
 
 /*void loop() {
   // --- IMU update ---
