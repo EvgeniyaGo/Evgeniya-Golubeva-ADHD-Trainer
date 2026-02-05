@@ -103,13 +103,13 @@ ColorId parseColor(const String &s) {
 // --------------------------------------- Cube adjacency (1 step) ---------------------------------------
 Vec3 faceNormal(FaceId f) {
   switch (f) {
-    case FACE_UP: return { 0, 0, 1 };
-    case FACE_DOWN: return { 0, 0, -1 };
-    case FACE_FRONT: return { 0, 1, 0 };
-    case FACE_BACK: return { 0, -1, 0 };
-    case FACE_RIGHT: return { 1, 0, 0 };
-    case FACE_LEFT: return { -1, 0, 0 };
-    default: return { 0, 0, 0 };
+    case FACE_UP:    return { 0, 0, 1 };
+    case FACE_DOWN:  return { 0, 0,-1 };
+    case FACE_FRONT: return { 1, 0, 0 };
+    case FACE_BACK:  return {-1, 0, 0 };
+    case FACE_LEFT:  return { 0, 1, 0 };
+    case FACE_RIGHT: return { 0,-1, 0 };
+    default:         return { 0, 0, 0 };
   }
 }
 
@@ -127,36 +127,41 @@ bool areFacesAdjacent(FaceId a, FaceId b) {
 void faceBasis(FaceId f, Vec3 &up, Vec3 &right) {
   switch (f) {
     case FACE_UP:
-      up = { 0, -1, 0 };
-      right = { 1, 0, 0 };
+      up    = { 0, 1, 0 };   // +Y = LEFT
+      right = { 1, 0, 0 };   // +X = FRONT
       break;
 
     case FACE_DOWN:
-      up = { 0, -1, 0 };
-      right = { -1, 0, 0 };
+      up    = { 0, -1, 0 };
+      right = {-1, 0, 0 };
       break;
 
     case FACE_FRONT:
-      up = { 0, 0, 1 };
-      right = { 1, 0, 0 };
+      up    = { 0, 0, 1 };   // +Z = UP
+      right = { 0,-1, 0 };   // -Y = RIGHT
       break;
 
     case FACE_BACK:
-      up = { 0, 0, 1 };
-      right = { -1, 0, 0 };
-      break;
-
-    case FACE_RIGHT:
-      up = { 0, 0, 1 };
-      right = { 0, -1, 0 };
+      up    = { 0, 0, 1 };
+      right = { 0, 1, 0 };
       break;
 
     case FACE_LEFT:
-      up = { 0, 0, 1 };
-      right = { 0, 1, 0 };
+      up    = { 0, 0, 1 };
+      right = { 1, 0, 0 };
+      break;
+
+    case FACE_RIGHT:
+      up    = { 0, 0, 1 };
+      right = {-1, 0, 0 };
+      break;
+
+    default:
+      up = right = { 0, 0, 0 };
       break;
   }
 }
+
 bool arrowFromTo(FaceId from, FaceId to, ShapeId &arrowOut) {
   if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) return false;
 
@@ -598,12 +603,12 @@ void setup() {
   delay(200);
 
   // Face rotation compensation (adjust later if needed)
-  setFaceRotation(FACE_UP, 0);
-  setFaceRotation(FACE_DOWN, 0);
-  setFaceRotation(FACE_LEFT, -1);
-  setFaceRotation(FACE_RIGHT, -2);
-  setFaceRotation(FACE_FRONT, 2);
-  setFaceRotation(FACE_BACK, 0);
+  setFaceRotation(FACE_UP, 1);
+  setFaceRotation(FACE_DOWN, -1);
+  setFaceRotation(FACE_LEFT, 0);
+  setFaceRotation(FACE_RIGHT, -3);
+  setFaceRotation(FACE_FRONT, 0);
+  setFaceRotation(FACE_BACK, 2);
 
 
   /*
@@ -616,9 +621,22 @@ void setup() {
 */
 
 
+
+
+
+
+
   clearAllFaces();
 
   Serial.println("[BLE] Advertising started");
+
+    mapToDisplay(FACE_UP, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(FACE_DOWN, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(FACE_LEFT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(FACE_RIGHT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(FACE_FRONT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+    mapToDisplay(FACE_BACK, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+
 }
 
 void loop() {
@@ -683,7 +701,11 @@ void loop() {
   // If up face is unknown, countdown stays on the last known face.
   if (isCountdownActive()) {
     FaceId active = isValidUpFace() ? imu.upFace : FACE_UNKNOWN;
-    updateCountdown(active);
+    if (pauseActive) {
+      updateCountdown(active);
+    } else {
+      updateCountdown(roundLockedFace);  // or whatever ARROW uses
+    }
   }
 
   // ================== PAUSE ROUND ==================
@@ -775,9 +797,10 @@ if (inRound && roundBalancing) {
       hasLeftStartFace = false;
 
       // Start the time-bound countdown border
-      startCountdown(roundCfg.durationMs);
-      updateCountdown(locked);  // render immediately on the locked face
-
+      if (!pauseActive) {
+        startCountdown(roundCfg.durationMs);
+        updateCountdown(locked);  // render immediately on the locked face
+      }
 
       String msg = "ROUND BALANCE side=";
       msg += parseFace(locked);

@@ -17,6 +17,16 @@ type GattStuff = {
   tx: BluetoothRemoteGATTCharacteristic; // notifications from ESP
 };
 
+// ---------------- Adaptive difficulty ----------------
+
+const MIN_ROUND_MS = 1200;
+const MAX_ROUND_MS = 9000;
+
+const MIN_PAUSE_MS = 2000;
+const MAX_PAUSE_MS = 12000;
+
+
+
 export default function App() {
   // ─── Connection / cube control state ──────────────────────────────
   const [status, setStatus] = useState<
@@ -82,6 +92,9 @@ export default function App() {
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
   const roundDurationRef = useRef<number>(800); // default fallback
+  const baseDurationRef = useRef<number>(0);   // set on GAME START
+  const successStreakRef = useRef<number>(0);
+  const failStreakRef = useRef<number>(0);
 
   type EndRoundFailData = {
     face: FaceId;
@@ -198,8 +211,8 @@ export default function App() {
                 console.log(`[SRV] PAUSE round active on ${balancedFace} for ${round.duration}ms`);
               }
 
-//              pendingRoundRef.current = null;
-//              setPendingRound(null);
+              //              pendingRoundRef.current = null;
+              //              setPendingRound(null);
               continue;
             }
 
@@ -220,11 +233,13 @@ export default function App() {
                 console.log(
                   `[SRV] ROUND SUCCESS face=${data.face} time=${data.time}`
                 );
+                updateAdaptiveDuration("SUCCESS");
                 await handleEndRound(data.face);
               } else {
                 console.log(
                   `[SRV] ROUND FAIL face=${data.face} reason=${data.reason}`
                 );
+                updateAdaptiveDuration("FAIL");
                 await handleRoundFail(data);
               }
 
@@ -374,15 +389,35 @@ export default function App() {
     const choosePause = Math.random() < 0.5;
 
     if (choosePause) {
-      const duration = randInt(2000, 10000);
-      return { type: "PAUSE", duration, remaining };
+      const base = baseDurationRef.current || 3000;
+
+      const pauseMax = Math.min(
+        MAX_PAUSE_MS,
+        Math.max(
+          MIN_PAUSE_MS,
+          base + base * (Math.random() * 0.5 - 0.2) // -20% .. +30%
+        )
+      );
+
+      const pauseDuration = Math.round(
+        MIN_PAUSE_MS + Math.random() * (pauseMax - MIN_PAUSE_MS)
+      );
+
+      console.log(
+        `[SRV] PAUSE duration=${pauseDuration}ms (base=${base}ms)`
+      );
+
+      return {
+        type: "PAUSE",
+        duration: pauseDuration,
+        remaining,
+      };
     }
 
     const options = adjacency[from];
     const to = options[Math.floor(Math.random() * options.length)];
     const arrow = arrowFromTo(from, to);
 
-    // 👇 NEW
     const mode: "NORMAL" | "OPPOSITE" =
       Math.random() < 0.5 ? "OPPOSITE" : "NORMAL";
 
@@ -392,11 +427,48 @@ export default function App() {
       from,
       to,
       arrow,
-      duration: roundDurationRef.current,
+      duration: baseDurationRef.current,
       remaining,
     };
   }
 
+  function updateAdaptiveDuration(result: "SUCCESS" | "FAIL") {
+    const base = baseDurationRef.current || 3000;
+
+    // random 5–15%
+    const pct = 0.05 + Math.random() * 0.10;
+
+    let streakBonus = 0;
+
+    if (result === "SUCCESS") {
+      successStreakRef.current++;
+      failStreakRef.current = 0;
+      streakBonus = Math.min(successStreakRef.current * 0.02, 0.10);
+    } else {
+      failStreakRef.current++;
+      successStreakRef.current = 0;
+      streakBonus = Math.min(failStreakRef.current * 0.02, 0.10);
+    }
+
+    const effectivePct = pct + streakBonus;
+
+    let next =
+      result === "SUCCESS"
+        ? base * (1 - effectivePct)
+        : base * (1 + effectivePct);
+
+    next = Math.round(
+      Math.min(MAX_ROUND_MS, Math.max(MIN_ROUND_MS, next))
+    );
+
+    console.log(
+      `[SRV] ADAPT ${result}: ${base}ms → ${next}ms (pct=${Math.round(
+        effectivePct * 100
+      )}%)`
+    );
+
+    baseDurationRef.current = next;
+  }
 
   function roundStartLine(round: PendingRound): string {
     if (round.type === "PAUSE") {
@@ -517,40 +589,47 @@ export default function App() {
       setCommand("");
       return;
     }
-// ── INTERCEPT GAME START (AUTHORITATIVE) ───────────────
-  if (upper.startsWith("GAME START")) {
-    const params = Object.fromEntries(
-      upper.split(/\s+/).slice(2).map(p => {
-        const [k, v] = p.split("=");
-        return [k.toLowerCase(), v];
-      })
-    );
+    // ── INTERCEPT GAME START (AUTHORITATIVE) ───────────────
+    if (upper.startsWith("GAME START")) {
+      const params = Object.fromEntries(
+        upper.split(/\s+/).slice(2).map(p => {
+          const [k, v] = p.split("=");
+          return [k.toLowerCase(), v];
+        })
+      );
 
-    const remaining = params.remaining
-      ? Number(params.remaining)
-      : 1;
+      const remaining = params.remaining
+        ? Number(params.remaining)
+        : 1;
 
-    const duration = params.duration
-      ? Number(params.duration)
-      : roundDurationRef.current;
+      const duration = params.duration
+        ? Number(params.duration)
+        : roundDurationRef.current;
 
-    // 🔑 Store server-owned state
-    remainingRoundsRef.current = remaining;
-    roundDurationRef.current = duration;
+      // Store server-owned state
+      remainingRoundsRef.current = remaining;
+      roundDurationRef.current = duration;
 
-    console.log(
-      "[SRV] GAME START remaining=",
-      remaining,
-      "duration=",
-      duration
-    );
+      baseDurationRef.current = duration; // duration from GAME START
+      successStreakRef.current = 0;
+      failStreakRef.current = 0;
 
-    // Forward simplified command to ESP
-    await writeLine("GAME START type=SIMON\n");
+      console.log(`[SRV] GAME START baseDuration=${duration}ms`);
 
-    setCommand("");
-    return;
-  }
+
+      console.log(
+        "[SRV] GAME START remaining=",
+        remaining,
+        "duration=",
+        duration
+      );
+
+      // Forward simplified command to ESP
+      await writeLine("GAME START type=SIMON\n");
+
+      setCommand("");
+      return;
+    }
 
     // ── INTERCEPT ROUND START (AUTHORITATIVE) ───────────
     if (upper.startsWith("ROUND START")) {
@@ -562,7 +641,7 @@ export default function App() {
       );
 
       const remaining = params.remaining ? Number(params.remaining) : 1;
-      const duration = params.duration ? Number(params.duration) : roundDurationRef.current;
+      const duration = params.duration ? Number(params.duration) : baseDurationRef.current;
 
       remainingRoundsRef.current = remaining;
       roundDurationRef.current = duration;
@@ -589,7 +668,6 @@ export default function App() {
         setRoundPhase(RoundPhase.WAIT_BALANCE);
         roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
       }
-      await writeLine(`DRAW SHAPE TOP SHAPE_ARROW_DOWN COLOR_WHITE\n`);
 
       const line = raw.endsWith("\n") ? raw : raw + "\n";
       await writeLine(line);
@@ -621,7 +699,7 @@ export default function App() {
         from,
         to,
         arrow,
-        duration: roundDurationRef.current,
+        duration: baseDurationRef.current,
         remaining: remainingRoundsRef.current || 1,
       };
 
@@ -632,7 +710,7 @@ export default function App() {
 
       // Ask ESP to start balancing for next round
       await writeLine(
-        "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+        `ROUND START type=SIMON duration=${baseDurationRef.current} want_locked=1 allow_side_change=0\n`
       );
 
       pushLog(`[SRV] DRAW ARROW ${from} → ${to} (${arrow})`);
@@ -665,33 +743,62 @@ export default function App() {
     | "SHAPE_CIRCLE_6X6";
   type Vec3 = { x: number; y: number; z: number };
 
-  function faceNormal(f: FaceId): Vec3 {
-    switch (f) {
-      case "TOP": return { x: 0, y: 0, z: 1 };
-      case "BOTTOM": return { x: 0, y: 0, z: -1 };
-      case "FRONT": return { x: 0, y: 1, z: 0 };
-      case "BACK": return { x: 0, y: -1, z: 0 };
-      case "RIGHT": return { x: 1, y: 0, z: 0 };
-      case "LEFT": return { x: -1, y: 0, z: 0 };
-    }
+function faceNormal(f: FaceId): Vec3 {
+  switch (f) {
+    case "TOP":    return { x: 0, y: 0, z: 1 };
+    case "BOTTOM": return { x: 0, y: 0, z: -1 };
+    case "FRONT":  return { x: 1, y: 0, z: 0 };
+    case "BACK":   return { x: -1, y: 0, z: 0 };
+    case "LEFT":   return { x: 0, y: 1, z: 0 };
+    case "RIGHT":  return { x: 0, y: -1, z: 0 };
   }
+}
 
-  function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
-    switch (f) {
-      case "TOP":
-        return { up: { x: 0, y: -1, z: 0 }, right: { x: 1, y: 0, z: 0 } };
-      case "BOTTOM":
-        return { up: { x: 0, y: -1, z: 0 }, right: { x: -1, y: 0, z: 0 } };
-      case "FRONT":
-        return { up: { x: 0, y: 0, z: 1 }, right: { x: 1, y: 0, z: 0 } };
-      case "BACK":
-        return { up: { x: 0, y: 0, z: 1 }, right: { x: -1, y: 0, z: 0 } };
-      case "RIGHT":
-        return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: -1, z: 0 } };
-      case "LEFT":
-        return { up: { x: 0, y: 0, z: 1 }, right: { x: 0, y: 1, z: 0 } };
-    }
+function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
+  switch (f) {
+    case "TOP":
+      // Looking down +Z
+      return {
+        up:    { x: 0, y: 1, z: 0 },   // +Y → LEFT
+        right: { x: 1, y: 0, z: 0 },   // +X → FRONT
+      };
+
+    case "BOTTOM":
+      // Looking down -Z
+      return {
+        up:    { x: 0, y: -1, z: 0 },   // still +Y
+        right: { x: -1, y: 0, z: 0 },  // flipped X
+      };
+
+    case "FRONT":
+      // Looking down +X
+      return {
+        up:    { x: 0, y: 0, z: 1 },   // +Z → UP
+        right: { x: 0, y: -1, z: 0 },  // -Y → RIGHT
+      };
+
+    case "BACK":
+      // Looking down -X
+      return {
+        up:    { x: 0, y: 0, z: 1 },   // +Z → UP
+        right: { x: 0, y: 1, z: 0 },   // +Y → LEFT
+      };
+
+    case "LEFT":
+      // Looking down +Y
+      return {
+        up:    { x: 0, y: 0, z: 1 },   // +Z → UP
+        right: { x: 1, y: 0, z: 0 },   // +X → FRONT
+      };
+
+    case "RIGHT":
+      // Looking down -Y
+      return {
+        up:    { x: 0, y: 0, z: 1 },   // +Z → UP
+        right: { x: -1, y: 0, z: 0 },  // -X → BACK
+      };
   }
+}
   function arrowFromTo(from: FaceId, to: FaceId): ShapeId {
     const n = faceNormal(to);
     const { up, right } = faceBasis(from);
@@ -803,7 +910,7 @@ export default function App() {
       from,
       to,
       arrow,
-      duration: roundDurationRef.current,
+      duration: baseDurationRef.current,
       remaining: remainingRoundsRef.current || 1,
     };
 
@@ -814,7 +921,7 @@ export default function App() {
 
     // Tell ESP to start balancing
     await writeLine(
-      "ROUND START type=SIMON duration=5000 want_locked=1 allow_side_change=0\n"
+      `ROUND START type=SIMON duration=${baseDurationRef.current} want_locked=1 allow_side_change=0\n`
     );
 
     console.log(`[SRV] MANUAL ROUND START ${from} → ${to} (${arrow})`);

@@ -7,12 +7,12 @@
 
 // ───────────────────────── Pins ─────────────────────────
 // (per your cube wiring)
-#define PIN_LED_UP    26
-#define PIN_LED_DOWN  12
-#define PIN_LED_LEFT  33
-#define PIN_LED_RIGHT 32
-#define PIN_LED_BACK  14
-#define PIN_LED_FRONT 27
+#define PIN_LED_UP    32
+#define PIN_LED_DOWN  27
+#define PIN_LED_LEFT  14
+#define PIN_LED_RIGHT 12
+#define PIN_LED_BACK  33
+#define PIN_LED_FRONT 26
 
 // ───────────────────────── Matrix config ─────────────────────────
 #define MATRIX_WIDTH   10

@@ -300,9 +300,16 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   for (uint8_t i = removed; i < totalPixels; i++) {
     uint8_t x, y;
     idxToXY(i, x, y);
+    rotatePixel(x, y, faceRotations[countdownFace]);
     uint16_t p = coordToIndex(x, y);
     if (p != 0xFFFF) buffer[p] = shades.c;
   }
+}
+
+inline void safeShow(Adafruit_NeoPixel* strip) {
+  noInterrupts();
+  strip->show();
+  interrupts();
 }
 
 void renderFace(FaceId face) {
@@ -328,7 +335,7 @@ void renderFace(FaceId face) {
   for (uint16_t i = 0; i < MATRIX_PIXELS; i++) {
     strip->setPixelColor(i, buffer[i]);
   }
-  strip->show();
+  safeShow(strip);
 }
 
 void startCountdown(uint32_t durationMs) {
@@ -343,6 +350,7 @@ void startCountdown(uint32_t durationMs) {
 
 void updateCountdown(FaceId activeFace) {
   if (!countdownActive) return;
+  if (pauseActive && activeFace != pauseFace) return;
 
   const uint32_t now = millis();
   const uint32_t elapsed = now - countdownStartTime;
