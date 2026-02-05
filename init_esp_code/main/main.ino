@@ -554,6 +554,13 @@ class RxCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+static uint32_t lastTick = 0;
+static int32_t countdownMs = 10000;   // start at 10s
+static int8_t dir = -1;               // -1 = down, +1 = up
+static bool goingDown = true;
+static uint32_t lastRestart = 0;
+static FaceId countdownOwnerFace = FACE_UNKNOWN;
+
 
 
 // --------------------------------------- setup / loop ---------------------------------------
@@ -630,20 +637,62 @@ void setup() {
 
   Serial.println("[BLE] Advertising started");
 
-    mapToDisplay(FACE_UP, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(FACE_DOWN, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(FACE_LEFT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(FACE_RIGHT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(FACE_FRONT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
-    mapToDisplay(FACE_BACK, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_UP, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_DOWN, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_LEFT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_RIGHT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_FRONT, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//    mapToDisplay(FACE_BACK, SHAPE_CIRCLE_6X6, COLOR_BLUE, DISPLAY_STATIC);
+//
+FaceId testFace = FACE_FRONT;   // pick ONE face
+startCountdown(10000);
+    lastRestart = millis();
 
 }
 
-void loop() {
-  // --- IMU update ---
-  updateImu();  // or imu_read(), whichever you already use
 
-  imu = getImuState();
+
+bool countdownMayFollowUpFace() {
+  if (pauseActive) return false;
+  if (inRound && !roundBalancing) return false; // locked play phase
+  return true;
+}
+void updateCountdownOwner(const ImuState& imu) {
+  if (!isCountdownActive()) return;
+
+  if (countdownMayFollowUpFace()) {
+    if (isValidUpFace()) {
+      //  change owner only here
+      countdownOwnerFace = imu.upFace;
+    }
+  }
+}
+
+
+void loop() {
+  updateImu();
+  ImuState imu = getImuState();
+
+  // --- EXISTING game logic stays as-is ---
+  // (pause, balancing, success/fail, etc.)
+
+  // --- NEW: decide who owns the countdown face ---
+  updateCountdownOwner(imu);
+
+  // --- Update countdown timing ---
+  updateCountdown(countdownOwnerFace);
+
+  // --- Render exactly once ---
+  if (countdownOwnerFace != FACE_UNKNOWN) {
+    renderFace(countdownOwnerFace);
+  }
+
+  delay(20);
+}
+
+/*void loop() {
+  // --- IMU update ---
+
   uint32_t now = millis();
   const uint32_t ROUND_PLAY_TIMEOUT_MS = roundCfg.durationMs;
 
@@ -878,3 +927,4 @@ if (inRound && !roundBalancing && currentTargetFace != FACE_UNKNOWN) {
     return;
   }
 }
+*/

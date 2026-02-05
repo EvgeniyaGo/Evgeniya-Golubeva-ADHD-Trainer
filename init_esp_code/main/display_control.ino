@@ -246,58 +246,55 @@ void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation
 void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   if (!countdownActive) return;
 
-  const uint8_t totalPixels = (MATRIX_WIDTH * 2) + (MATRIX_HEIGHT * 2) - 4; // 10x10 => 36
+  const uint8_t totalPixels =
+    (MATRIX_WIDTH * 2) + (MATRIX_HEIGHT * 2) - 4; // 10x10 => 36
+
   uint8_t remaining = countdownPixelsRemaining;
   if (remaining > totalPixels) remaining = totalPixels;
 
-  // Disappearance order:
-  // (1,0) → ... → (W-1,0) → (W-1,1) → ... → (W-1,H-1) → (W-2,H-1) → ... → (0,H-1) → (0,H-2) → ... → (0,1) → (0,0)
+  // Disappearance order mapping
   auto idxToXY = [](uint8_t idx, uint8_t &x, uint8_t &y) {
     const uint8_t W = MATRIX_WIDTH;
     const uint8_t H = MATRIX_HEIGHT;
 
-    const uint8_t topLen   = W - 1;       // (1..W-1) inclusive
-    const uint8_t rightLen = H - 1;       // (1..H-1)
-    const uint8_t botLen   = W - 1;       // (W-2..0) + corner (0,H-1)
-    const uint8_t leftLen  = H - 2;       // (H-2..1)
-    // final pixel (0,0) is idx = totalPixels-1
+    const uint8_t topLen   = W - 1;
+    const uint8_t rightLen = H - 1;
+    const uint8_t botLen   = W - 1;
+    const uint8_t leftLen  = H - 2;
 
-    if (idx < topLen) {                   // top row, skipping (0,0)
-      x = idx + 1;
-      y = 0;
-      return;
+    if (idx < topLen) {
+      x = idx + 1; y = 0; return;
     }
     idx -= topLen;
 
-    if (idx < rightLen) {                 // right column
-      x = W - 1;
-      y = idx + 1;
-      return;
+    if (idx < rightLen) {
+      x = W - 1; y = idx + 1; return;
     }
     idx -= rightLen;
 
-    if (idx < botLen) {                   // bottom row (includes (0,H-1))
-      x = (W - 2) - idx;
-      y = H - 1;
-      return;
+    if (idx < botLen) {
+      x = (W - 2) - idx; y = H - 1; return;
     }
     idx -= botLen;
 
-    if (idx < leftLen) {                  // left column (excluding corners)
-      x = 0;
-      y = (H - 2) - idx;
-      return;
+    if (idx < leftLen) {
+      x = 0; y = (H - 2) - idx; return;
     }
 
-    // last pixel
-    x = 0;
-    y = 0;
+    x = 0; y = 0;
   };
 
-  // If remaining=N, that means the first (totalPixels-N) pixels have already disappeared.
-  const uint8_t removed = totalPixels - remaining;
+  // 1. Clear pixels that have disappeared
+  for (uint8_t i = remaining; i < totalPixels; i++) {
+    uint8_t x, y;
+    idxToXY(i, x, y);
+    rotatePixel(x, y, faceRotations[countdownFace]);
+    uint16_t p = coordToIndex(x, y);
+    if (p != 0xFFFF) buffer[p] = 0;
+  }
 
-  for (uint8_t i = removed; i < totalPixels; i++) {
+// 2. Draw remaining pixels
+  for (uint8_t i = 0; i < remaining; i++) {
     uint8_t x, y;
     idxToXY(i, x, y);
     rotatePixel(x, y, faceRotations[countdownFace]);
@@ -306,10 +303,12 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   }
 }
 
+portMUX_TYPE neopixelMux = portMUX_INITIALIZER_UNLOCKED;
+
 inline void safeShow(Adafruit_NeoPixel* strip) {
-  noInterrupts();
-  strip->show();
-  interrupts();
+taskENTER_CRITICAL(&neopixelMux);
+strip->show();
+taskEXIT_CRITICAL(&neopixelMux);
 }
 
 void renderFace(FaceId face) {
@@ -335,7 +334,7 @@ void renderFace(FaceId face) {
   for (uint16_t i = 0; i < MATRIX_PIXELS; i++) {
     strip->setPixelColor(i, buffer[i]);
   }
-  safeShow(strip);
+  strip->show();
 }
 
 void startCountdown(uint32_t durationMs) {
@@ -439,5 +438,4 @@ void renderAnimationFrame(FaceId face, const char* frameDef, uint8_t frameSize, 
     }
   }
   
-  strip->show();
 }
