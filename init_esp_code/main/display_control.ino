@@ -201,6 +201,9 @@ void clearAllFaces() {
   for (uint8_t i = 0; i < FACE_COUNT; i++) {
     clearFace((FaceId)i);
   }
+  for (int f = 0; f < FACE_COUNT; f++) {
+    staticShape[f].active = false;
+  }
 }
 
 void recolorShape(FaceId face, ShapeId shape, ColorId newColor) {
@@ -313,29 +316,40 @@ taskEXIT_CRITICAL(&neopixelMux);
 
 void renderFace(FaceId face) {
   if (face >= FACE_COUNT) return;
-  
+
   Adafruit_NeoPixel* strip = faceStrips[face];
   uint32_t buffer[MATRIX_PIXELS] = {0};
-  
-  // Render all active layers bottom to top
+
+  //  Managed layers (bottom → top)
   for (uint8_t i = 0; i < MAX_LAYERS_PER_FACE; i++) {
     if (faceLayers[face][i].active) {
       renderShapeLayer(buffer, faceLayers[face][i], faceRotations[face]);
     }
   }
-  
-  // Render countdown on top if this is the active face
+
+  //  Static shape overlay
+  if (staticShape[face].active) {
+    ShapeLayer layer;
+  layer.active  = true;
+  layer.shapeId = staticShape[face].shape;   
+  layer.colorId = staticShape[face].color;   
+
+    renderShapeLayer(buffer, layer, faceRotations[face]);
+  }
+
+  //  Countdown overlay (topmost)
   if (countdownActive && face == countdownFace) {
     ColorShades shades = getColorShades(countdownColor);
     renderCountdownBorder(buffer, shades);
   }
-  
-  // Push buffer to strip
+
+  //  Push buffer
   for (uint16_t i = 0; i < MATRIX_PIXELS; i++) {
     strip->setPixelColor(i, buffer[i]);
   }
   strip->show();
 }
+
 
 void startCountdown(uint32_t durationMs) {
   if (countdownActive) return;
