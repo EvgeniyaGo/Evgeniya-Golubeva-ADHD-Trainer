@@ -400,9 +400,7 @@ void handleCommand(const String &raw) {
       roundBalanceStartMs = millis();
 
       pendingRoundStart.active = true;
-      pendingRoundStart.face =
-        (from != FACE_UNKNOWN) ? from : imu.upFace;
-
+      pendingRoundStart.face = FACE_UNKNOWN;
       pendingCountdown.action = CD_START;
       pendingCountdown.durationMs = roundCfg.durationMs;
 
@@ -711,7 +709,6 @@ startCountdown(10000);
 
 bool countdownMayFollowUpFace() {
   if (pauseActive) return false;
-  if (inRound && !roundBalancing) return false; // locked play phase
   return true;
 }
 void updateCountdownOwner(const ImuState& imu) {
@@ -734,7 +731,7 @@ void onBleRoundStart(FaceId requestedFace) {
 void loop() {
   // ================= IMU =================
   updateImu();
-  ImuState imu = getImuState();
+  imu = getImuState();
   uint32_t now = millis();
 
   // ================= DEBUG =================
@@ -772,7 +769,6 @@ void loop() {
     roundBalanceStartMs = now;
     roundStartMs = now;
 
-    countdownOwnerFace = roundLockedFace;
 
     pendingCountdown.action = CD_START;
     pendingCountdown.durationMs = roundCfg.durationMs;
@@ -879,8 +875,17 @@ void loop() {
     }
 
     if (isFaceLocked()) {
-      roundLockedFace = imu.upFace;
-      startFace = imu.upFace;
+      if (pendingRoundStart.active &&
+          pendingRoundStart.face != FACE_UNKNOWN) {
+        startFace = pendingRoundStart.face;
+      } else {
+        startFace = imu.upFace;
+      }
+
+      roundLockedFace = startFace;
+      hasLeftStartFace = false;
+
+      pendingRoundStart.active = false;
       hasLeftStartFace = false;
 
       roundBalancing = false;

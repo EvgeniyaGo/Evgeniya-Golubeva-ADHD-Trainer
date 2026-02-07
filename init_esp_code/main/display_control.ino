@@ -246,7 +246,7 @@ void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation
 }
 
 // Render countdown border on buffer
-void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
+void renderCountdownBorder(uint32_t* buffer, ColorShades shades, FaceId face) {
   if (!countdownActive) return;
 
   const uint8_t totalPixels =
@@ -291,7 +291,7 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   for (uint8_t i = remaining; i < totalPixels; i++) {
     uint8_t x, y;
     idxToXY(i, x, y);
-    rotatePixel(x, y, faceRotations[countdownFace]);
+    rotatePixel(x, y, faceRotations[face]);
     uint16_t p = coordToIndex(x, y);
     if (p != 0xFFFF) buffer[p] = 0;
   }
@@ -300,7 +300,7 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades) {
   for (uint8_t i = 0; i < remaining; i++) {
     uint8_t x, y;
     idxToXY(i, x, y);
-    rotatePixel(x, y, faceRotations[countdownFace]);
+    rotatePixel(x, y, faceRotations[face]);
     uint16_t p = coordToIndex(x, y);
     if (p != 0xFFFF) buffer[p] = shades.c;
   }
@@ -340,7 +340,7 @@ void renderFace(FaceId face) {
   //  Countdown overlay (topmost)
   if (countdownActive && face == countdownFace) {
     ColorShades shades = getColorShades(countdownColor);
-    renderCountdownBorder(buffer, shades);
+    renderCountdownBorder(buffer, shades, face);
   }
 
   //  Push buffer
