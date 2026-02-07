@@ -756,30 +756,19 @@ void loop() {
   // ======================================================
   // ========== APPLY PENDING BLE ROUND START ==============
   // ======================================================
-  if (pendingRoundStart.active) {
+  if (pendingRoundStart.active && imu.upFace != FACE_UNKNOWN) {
 
     inRound = true;
     pauseActive = false;
     roundBalancing = true;
 
-    roundLockedFace = pendingRoundStart.face;
-    startFace = pendingRoundStart.face;
-
     hasLeftStartFace = false;
     roundBalanceStartMs = now;
     roundStartMs = now;
 
-
     pendingCountdown.action = CD_START;
     pendingCountdown.durationMs = roundCfg.durationMs;
-
-    bleTx.active = true;
-    bleTx.msg =
-      String("ROUND BALANCE side=")
-      + parseFace(roundLockedFace)
-      + "\n";
-
-    pendingRoundStart.active = false;
+    pendingRoundStart.active = true;
   }
 
   // ======================================================
@@ -874,34 +863,33 @@ void loop() {
       goto render_tail;
     }
 
-    if (isFaceLocked()) {
-      if (pendingRoundStart.active &&
-          pendingRoundStart.face != FACE_UNKNOWN) {
-        startFace = pendingRoundStart.face;
-      } else {
-        startFace = imu.upFace;
-      }
+  // ================= BALANCE LOCK =======================
+  if (roundBalancing &&
+      isFaceLocked() &&
+      imu.upFace != FACE_UNKNOWN) {
 
-      roundLockedFace = startFace;
-      hasLeftStartFace = false;
-
-      pendingRoundStart.active = false;
-      hasLeftStartFace = false;
-
-      roundBalancing = false;
-      roundStartMs = now;
-
-      countdownOwnerFace = roundLockedFace;
-
-      pendingCountdown.action = CD_START;
-      pendingCountdown.durationMs = roundCfg.durationMs;
-
-      bleTx.active = true;
-      bleTx.msg =
-        String("ROUND BALANCE side=")
-        + parseFace(roundLockedFace)
-        + "\n";
+    // Decide final start face
+    if (pendingRoundStart.face != FACE_UNKNOWN &&
+        pendingRoundStart.face == imu.upFace) {
+      startFace = pendingRoundStart.face;   // request accepted
+    } else {
+      startFace = imu.upFace;                // reality wins
     }
+
+    roundLockedFace = startFace;
+    roundBalancing = false;
+
+    // NOW and ONLY NOW send BALANCE
+    bleTx.active = true;
+    bleTx.msg =
+      String("ROUND BALANCE side=")
+      + parseFace(startFace)
+      + "\n";
+
+    // cleanup
+    pendingRoundStart.active = false;
+    pendingRoundStart.face = FACE_UNKNOWN;
+  }
 
     goto render_tail;
   }
