@@ -133,10 +133,17 @@ void rotatePixel(uint8_t &x, uint8_t &y, int8_t steps) {
 }
 
 // Convert 2D coordinates to 1D pixel index
-uint16_t coordToIndex(uint8_t x, uint8_t y) {
+uint16_t coordToIndex(uint8_t x, uint8_t y, FaceId face) {
   if (x >= MATRIX_WIDTH || y >= MATRIX_HEIGHT) return 0xFFFF;
+
+  if (face == FACE_UP) {
+    // mirror X for TOP face only
+    return y * MATRIX_WIDTH + (MATRIX_WIDTH - 1 - x);
+  }
+
   return y * MATRIX_WIDTH + x;
 }
+
 
 void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, uint32_t timeout) {
   if (face >= FACE_COUNT || shape >= SHAPE_COUNT || color >= COLOR_COUNT) return;
@@ -172,6 +179,7 @@ void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, u
   faceLayers[face][layerIdx].active = true;
   
   renderFace(face);
+
 }
 
 void deleteShape(FaceId face, ShapeId shape) {
@@ -219,7 +227,7 @@ void recolorShape(FaceId face, ShapeId shape, ColorId newColor) {
 }
 
 // Render shape layer to buffer
-void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation) {
+void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation, FaceId face) {
   const char* shapeDef = getShapeDefinition(layer.shapeId);
   if (!shapeDef) return;
   
@@ -232,7 +240,7 @@ void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation
       
       uint8_t rx = x, ry = y;
       rotatePixel(rx, ry, rotation);
-      uint16_t idx = coordToIndex(rx, ry);
+      uint16_t idx = coordToIndex(rx, ry, face);
       if (idx == 0xFFFF) continue;
       
       switch (pixel) {
@@ -292,7 +300,7 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades, FaceId face) {
     uint8_t x, y;
     idxToXY(i, x, y);
     rotatePixel(x, y, faceRotations[face]);
-    uint16_t p = coordToIndex(x, y);
+    uint16_t p = coordToIndex(x, y,face);
     if (p != 0xFFFF) buffer[p] = 0;
   }
 
@@ -301,7 +309,7 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades, FaceId face) {
     uint8_t x, y;
     idxToXY(i, x, y);
     rotatePixel(x, y, faceRotations[face]);
-    uint16_t p = coordToIndex(x, y);
+    uint16_t p = coordToIndex(x, y, face);
     if (p != 0xFFFF) buffer[p] = shades.c;
   }
 }
@@ -323,7 +331,7 @@ void renderFace(FaceId face) {
   //  Managed layers (bottom → top)
   for (uint8_t i = 0; i < MAX_LAYERS_PER_FACE; i++) {
     if (faceLayers[face][i].active) {
-      renderShapeLayer(buffer, faceLayers[face][i], faceRotations[face]);
+      renderShapeLayer(buffer, faceLayers[face][i], faceRotations[face], face);
     }
   }
 
@@ -334,7 +342,7 @@ void renderFace(FaceId face) {
   layer.shapeId = staticShape[face].shape;   
   layer.colorId = staticShape[face].color;   
 
-    renderShapeLayer(buffer, layer, faceRotations[face]);
+    renderShapeLayer(buffer, layer, faceRotations[face], face);
   }
 
   //  Countdown overlay (topmost)
@@ -347,19 +355,20 @@ void renderFace(FaceId face) {
   for (uint16_t i = 0; i < MATRIX_PIXELS; i++) {
     strip->setPixelColor(i, buffer[i]);
   }
-  strip->show();
 }
 
+void flushDisplay() {
+  for (uint8_t f = 0; f < FACE_COUNT; f++) {
+    faceStrips[f]->show();
+  }
+}
 
-void startCountdown(uint32_t durationMs) {
+void startCountdown(uint32_t durationMs, FaceId initialFace) {
   if (countdownActive) return;
   countdownActive = true;
   countdownStartTime = millis();
   countdownDuration = durationMs;
-  countdownFace = FACE_UNKNOWN;
-  countdownPixelsRemaining = (MATRIX_WIDTH * 4) - 4; // full perimeter (10x10 => 36)
-  countdownColor = COLOR_BLUE;
-  Serial.printf("[Countdown] Started: %dms\n", durationMs);
+  countdownFace = initialFace;    // deterministic
 }
 
 void updateCountdown(FaceId activeFace) {
@@ -386,13 +395,20 @@ void updateCountdown(FaceId activeFace) {
   countdownPixelsRemaining = (uint8_t)(totalPixels - removed);
 
   // Move countdown to active face if changed
-  if (activeFace != countdownFace && activeFace < FACE_COUNT) {
+  if (activeFace < FACE_COUNT && activeFace != countdownFace) {
+
     FaceId oldFace = countdownFace;
-    countdownFace = activeFace;
+
+    // --- FORCE CLEANUP OF OLD FACE ---
+    // Temporarily disable countdown ownership
+    countdownFace = FACE_UNKNOWN;
 
     if (oldFace < FACE_COUNT) {
-      renderFace(oldFace);
+      renderFace(oldFace);   // renders WITHOUT countdown overlay
     }
+
+    // --- ASSIGN NEW OWNER ---
+    countdownFace = activeFace;
   }
 
   if (countdownFace < FACE_COUNT) {
@@ -446,7 +462,7 @@ void renderAnimationFrame(FaceId face, const char* frameDef, uint8_t frameSize, 
       uint8_t colorIdx = pixel - '0';
       if (colorIdx >= numColors) continue;
       
-      uint16_t idx = coordToIndex(x, y);
+      uint16_t idx = coordToIndex(x, y, face);
       if (idx == 0xFFFF) continue;
       
       strip->setPixelColor(idx, shades[colorIdx].x);
