@@ -255,6 +255,7 @@ static int8_t dir = -1;               // -1 = down, +1 = up
 static bool goingDown = true;
 static uint32_t lastRestart = 0;
 static FaceId countdownOwnerFace = FACE_UNKNOWN;
+bool displayClearedThisRound = false;
 
 struct PendingBleRoundStart {
   bool active = false;
@@ -352,6 +353,7 @@ void handleCommand(const String &raw) {
 
       pendingCountdown.action = CD_STOP;
       pendingDisplay.action = DISP_CLEAR_ALL;
+      displayClearedThisRound = false;
 
       bleTx.active = true;
       bleTx.msg = "OK ROUND START\n";
@@ -402,6 +404,7 @@ void handleCommand(const String &raw) {
       pendingRoundStart.active = true;
       pendingRoundStart.face = FACE_UNKNOWN;
       pendingCountdown.action = CD_START;
+      pendingDisplay.action = DISP_CLEAR_ALL;
       pendingCountdown.durationMs = roundCfg.durationMs;
 
       bleTx.active = true;
@@ -530,6 +533,8 @@ void handleCommand(const String &raw) {
     staticShape[face].shape  = shape;
     staticShape[face].color  = color;
 
+    displayClearedThisRound = false;
+
     bleTx.active = true;
     bleTx.msg = "OK DRAW SHAPE\n";
     return;
@@ -538,6 +543,7 @@ void handleCommand(const String &raw) {
   // ================= DRAW ARROW =================
   if (upper.startsWith("DRAW ")) {
 
+    
     String tokens[6];
     uint8_t count = 0;
 
@@ -818,6 +824,8 @@ void loop() {
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
 
+      pendingDisplay.action = DISP_CLEAR_ALL;
+
       bleTx.active = true;
       bleTx.msg =
         String("END ROUND result=FAIL face=")
@@ -838,6 +846,8 @@ void loop() {
       inRound = false;
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
+
+      pendingDisplay.action = DISP_CLEAR_ALL;
 
       bleTx.active = true;
       bleTx.msg =
@@ -864,6 +874,8 @@ void loop() {
       inRound = false;
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
+
+      pendingDisplay.action = DISP_CLEAR_ALL;
 
       bleTx.active = true;
       bleTx.msg =
@@ -918,6 +930,8 @@ void loop() {
       inRound = false;
       currentTargetFace = FACE_UNKNOWN;
 
+      pendingDisplay.action = DISP_CLEAR_ALL;
+
       bleTx.active = true;
       bleTx.msg =
         String("END ROUND result=FAIL face=")
@@ -953,6 +967,8 @@ void loop() {
     inRound = false;
     currentTargetFace = FACE_UNKNOWN;
 
+    pendingDisplay.action = DISP_CLEAR_ALL;
+
     bleTx.active = true;
     bleTx.msg =
       String("END ROUND result=FAIL face=")
@@ -972,6 +988,8 @@ void loop() {
 
     inRound = false;
     currentTargetFace = FACE_UNKNOWN;
+
+    pendingDisplay.action = DISP_CLEAR_ALL;
 
     bleTx.active = true;
     bleTx.msg =
@@ -1002,6 +1020,8 @@ void loop() {
 
       case DISP_CLEAR_ALL:
         clearAllFaces();
+        pendingDisplay.action = DISP_NONE;
+        displayClearedThisRound = true;
         break;
 
       case DISP_CLEAR_FACE:
@@ -1044,6 +1064,7 @@ void loop() {
 
     pendingDisplay.action = DISP_NONE;
   }
+
 
   // ======================================================
   // ================= RENDER TAIL ========================
