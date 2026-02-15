@@ -42,10 +42,6 @@ static bool readBytes(uint8_t startReg, uint8_t *buf, uint8_t len) {
 static inline float fAbs(float v) { return (v < 0) ? -v : v; }
 
 static inline FaceId faceFromAxes(float ax, float ay, float az) {
-  // YOUR verified mapping:
-  // +Z => UP, -Z => DOWN
-  // +X => BACK, -X => FRONT
-  // +Y => LEFT, -Y => RIGHT
   float axA = fAbs(ax), ayA = fAbs(ay), azA = fAbs(az);
 
   if (azA >= axA && azA >= ayA) return (az >= 0) ? FACE_UP : FACE_DOWN;
@@ -75,13 +71,8 @@ bool initImu() {
   if (!readReg(REG_DEVID, id)) return false;
   if (id != 0xE5) return false;
 
-  // 100 Hz
   if (!writeReg(REG_BW_RATE, 0x0A)) return false;
-
-  // FULL_RES + +/-4g
   if (!writeReg(REG_DATA_FORMAT, 0x09)) return false;
-
-  // Measure = 1
   if (!writeReg(REG_POWER_CTL, 0x08)) return false;
 
   gImuOk = true;
@@ -109,7 +100,7 @@ void updateImu() {
   int16_t rawY = (int16_t)((uint16_t)b[3] << 8 | b[2]);
   int16_t rawZ = (int16_t)((uint16_t)b[5] << 8 | b[4]);
 
-  const float G_PER_LSB = 0.004f; // approx in FULL_RES
+  const float G_PER_LSB = 0.004f; 
   float ax = rawY * G_PER_LSB;
   float ay = rawX * G_PER_LSB;
   float az = rawZ * G_PER_LSB;

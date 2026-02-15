@@ -8,9 +8,10 @@
 // 10x10 shapes, stored as text (10 lines × 10 chars + '\n')
 // '.' = off
 // 'X','Y','Z','C' = shade selection (see ColorShades in display_control)
+
 #define SHAPE_SIZE 10
 
-// ───────────────────────── Basic shapes ─────────────────────────
+//  Basic shapes 
 
 static const char SHAPE_FULL_DEF[] PROGMEM =
 "XXXXXXXXXX\n"
@@ -49,7 +50,7 @@ static const char SHAPE_CIRCLE_6X6_DEF[] PROGMEM =
 ".XXXXXXXX.\n"
 "..XXXXXX..\n";
 
-// ───────────────────────── Arrows ───────────────────────────────
+// Arrows 
 static const char SHAPE_ARROW_UP_DEF[] PROGMEM =
 "....XX....\n"
 "...XXXX...\n"
@@ -110,7 +111,7 @@ static const char SHAPE_ARROW_RIGHT_GLITCHED_DEF[] PROGMEM =
 "..........\n"
 "..........\n";
 
-// ───────────────────────── Cross & Smiley ────────────────────────
+//  Cross & Smiley 
 static const char SHAPE_CROSS_DEF[] PROGMEM =
 "X........X\n"
 ".X......X.\n"
@@ -135,7 +136,7 @@ static const char SHAPE_SMILEY_DEF[] PROGMEM =
 "...XXXX...\n"
 "..........\n";
 
-static inline const char* getShapeDefinition(ShapeId shapeId) {
+static inline const char* getShapeDefinition(ShapeId shapeId) { // used in renderShapeLayer in display_control
   switch (shapeId) {
     case SHAPE_FULL:                 return SHAPE_FULL_DEF;
     case SHAPE_SQUARE_8X8:           return SHAPE_SQUARE_8X8_DEF;

@@ -1,8 +1,6 @@
 #include "display_control.h"
 #include "shape_definitions.h"
-#include "types.h"
 
-// LED strip objects
 Adafruit_NeoPixel stripUp(MATRIX_PIXELS, PIN_LED_UP, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripDown(MATRIX_PIXELS, PIN_LED_DOWN, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel stripLeft(MATRIX_PIXELS, PIN_LED_LEFT, NEO_GRB + NEO_KHZ800);
@@ -14,17 +12,7 @@ static Adafruit_NeoPixel* faceStrips[FACE_COUNT] = {
   &stripUp, &stripDown, &stripLeft, &stripRight, &stripBack, &stripFront
 };
 
-// Face rotation compensation (0, 1, 2, 3, -1 = 0°, 90°, 180°, 270°, -90°)
-static int8_t faceRotations[FACE_COUNT] = {0, 0, 0, 0, 0, 0};
-/*
- [0] FACE_UP    → PIN_LED_UP    (26)
- [1] FACE_DOWN  → PIN_LED_DOWN  (12)
- [2] FACE_LEFT  → PIN_LED_LEFT  (33)
- [3] FACE_RIGHT → PIN_LED_RIGHT (32)
- [4] FACE_BACK  → PIN_LED_BACK  (14)
- [5] FACE_FRONT → PIN_LED_FRONT (27)
-*/
-
+static int8_t faceRotations[FACE_COUNT] = {0, 0, 0, 0, 0, 0}; // in setup using setFaceRotation changes these values
 
 // Layer management per face
 static ShapeLayer faceLayers[FACE_COUNT][MAX_LAYERS_PER_FACE];
@@ -146,8 +134,7 @@ uint16_t coordToIndex(uint8_t x, uint8_t y, FaceId face) {
 
 
 void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, uint32_t timeout) {
-  if (face >= FACE_COUNT || shape >= SHAPE_COUNT || color >= COLOR_COUNT) return;
-  
+  if (face >= FACE_COUNT || shape >= SHAPE_COUNT || color >= COLOR_COUNT) return;  
   // Find existing layer or create new one
   int8_t layerIdx = -1;
   for (uint8_t i = 0; i < MAX_LAYERS_PER_FACE; i++) {
@@ -314,14 +301,6 @@ void renderCountdownBorder(uint32_t* buffer, ColorShades shades, FaceId face) {
   }
 }
 
-portMUX_TYPE neopixelMux = portMUX_INITIALIZER_UNLOCKED;
-
-inline void safeShow(Adafruit_NeoPixel* strip) {
-taskENTER_CRITICAL(&neopixelMux);
-strip->show();
-taskEXIT_CRITICAL(&neopixelMux);
-}
-
 void renderFace(FaceId face) {
   if (face >= FACE_COUNT) return;
 
@@ -437,36 +416,4 @@ void setCountdownColor(ColorId color) {
 
 bool isCountdownActive() {
   return countdownActive;
-}
-
-// Animation helper function
-void renderAnimationFrame(FaceId face, const char* frameDef, uint8_t frameSize, ColorId colors[], uint8_t numColors) {
-  if (face >= FACE_COUNT || !frameDef) return;
-  
-  Adafruit_NeoPixel* strip = faceStrips[face];
-  if (!strip) return;
-  
-  strip->clear();
-  
-  ColorShades shades[3];
-  for (uint8_t i = 0; i < numColors && i < 3; i++) {
-    shades[i] = getColorShades(colors[i]);
-  }
-  
-  for (uint8_t y = 0; y < frameSize; y++) {
-    for (uint8_t x = 0; x < frameSize; x++) {
-      char pixel = pgm_read_byte(&frameDef[y * (frameSize + 1) + x]);
-      
-      if (pixel == '.') continue;
-      
-      uint8_t colorIdx = pixel - '0';
-      if (colorIdx >= numColors) continue;
-      
-      uint16_t idx = coordToIndex(x, y, face);
-      if (idx == 0xFFFF) continue;
-      
-      strip->setPixelColor(idx, shades[colorIdx].x);
-    }
-  }
-  
 }

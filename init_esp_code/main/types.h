@@ -3,11 +3,7 @@
 
 #include <Arduino.h>
 
-// ═══════════════════════════════════════════════════════════════
-//                        HARDWARE TYPES
-// ═══════════════════════════════════════════════════════════════
-
-// ───────────────────────── Faces ─────────────────────────
+// Faces
 enum FaceId : uint8_t {
   FACE_UP = 0,
   FACE_DOWN,
@@ -25,7 +21,7 @@ struct Vec3 {
   float z;
 };
 
-// ───────────────────────── Colors ─────────────────────────
+// Colors
 enum ColorId : uint8_t {
   COLOR_BLACK = 0,
   COLOR_BLUE,
@@ -47,7 +43,7 @@ struct ColorShades {
   uint32_t c;  // Darkest shade
 };
 
-// ───────────────────────── Shapes ─────────────────────────
+// Shapes 
 enum ShapeId : uint8_t {
   SHAPE_SQUARE_8X8 = 0,     // legacy name; rendered at SHAPE_SIZE (10x10)
   SHAPE_CIRCLE_6X6,
@@ -62,7 +58,7 @@ enum ShapeId : uint8_t {
   SHAPE_COUNT
 };
 
-// ───────────────────────── Display modes ─────────────────────────
+// Display modes
 enum DisplayMode : uint8_t {
   DISPLAY_STATIC = 0,         // stays until deleted
   MODE_DISAPPEAR_INACTIVE,  // placeholder for future (not used yet)
@@ -80,17 +76,7 @@ struct ShapeLayer {
   bool active;
 };
 
-// ───────────────────────── Animations ─────────────────────────
-enum AnimationId : uint8_t {
-  ANIM_START_GAME = 0,
-  ANIM_END_GAME,
-  ANIM_COUNTDOWN_321,
-  ANIM_ARROW_TO_CROSS,
-  ANIM_KING,
-  ANIM_COUNT
-};
-
-// ───────────────────────── IMU State ─────────────────────────
+// IMU State
 struct ImuState {
   FaceId upFace;
   float tiltPercent;
@@ -100,76 +86,9 @@ struct ImuState {
   float az;
 };
 
-// ───────────────────────── Display Settings ─────────────────────────
+// Display Settings
 #ifndef BRIGHTNESS
 #define BRIGHTNESS 50  // LED brightness (0-255)
 #endif
-
-// ═══════════════════════════════════════════════════════════════
-//                        GAME TYPES
-// ═══════════════════════════════════════════════════════════════
-
-// Arrow direction definitions
-enum ArrowDirection : uint8_t {
-  DIR_UP = 0,
-  DIR_DOWN,
-  DIR_LEFT,
-  DIR_RIGHT,
-  DIR_COUNT
-};
-
-// Audio phrase types
-enum AudioPhrase : uint8_t {
-  PHRASE_SIMON_SAYS = 0,    // Follow arrow
-  PHRASE_DIMON_SAYS,        // Opposite direction
-  PHRASE_SIMONA_SAYS,       // Opposite direction
-  PHRASE_SVETLIO_SAYS,      // Opposite direction
-  PHRASE_NIKI_SAYS,         // Opposite direction
-  PHRASE_ADI_SAYS,          // Opposite direction
-  PHRASE_COUNT
-};
-
-// Game state machine states
-enum GameState : uint8_t {
-  STATE_IDLE = 0,
-  STATE_GAME_START_ANIMATION,
-  STATE_INITIAL_COUNTDOWN,
-  STATE_PAUSE,
-  STATE_PLAYING_AUDIO,
-  STATE_WAITING_RESPONSE,
-  STATE_LOCKED_CONFIRMATION,
-  STATE_ROUND_END,
-  STATE_GAME_END_ANIMATION,
-  STATE_GAME_OVER
-};
-
-// Round data structure
-struct RoundData {
-  AudioPhrase phrase;           // Which phrase was "said"
-  ArrowDirection arrowDir;      // Arrow shown on cube
-  FaceId arrowFace;             // Face where arrow appears
-  FaceId expectedFace;          // Expected correct face
-  uint32_t roundStartTime;      // When round started (after pause)
-  uint32_t responseStartTime;   // When player can respond
-  uint32_t lockStartTime;       // When correct face was locked
-  bool isSimonSays;             // True if "Simon says"
-  bool responded;               // Player made a move
-  bool correct;                 // Response was correct
-  uint32_t responseTime;        // Time to respond (ms)
-  ColorId arrowColor;           // Color for this round's arrow
-  uint32_t countdownStartedAt;  // Track when countdown started
-  uint32_t countdownDuration;   // Track countdown total duration
-};
-
-// Game statistics structure
-struct GameStats {
-  uint16_t totalRounds;
-  uint16_t correctRounds;
-  uint16_t wrongRounds;
-  uint16_t omissions;           // Failed to act when should have
-  uint16_t commissions;         // Acted when should not have
-  uint32_t totalResponseTime;   // Sum of all response times
-  uint16_t responseCount;       // Number of valid responses
-};
 
 #endif

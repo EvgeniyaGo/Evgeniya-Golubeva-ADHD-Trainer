@@ -2,7 +2,7 @@
 #include "driver/i2s.h"
 #include <math.h>
 
-// ───────────────────────── Pin configuration ─────────────────────────
+// Pin configuration 
 #define I2S_BCLK 18
 #define I2S_LRCK 19
 #define I2S_DOUT 23
@@ -10,7 +10,7 @@
 #define AMP_SD_PIN    21
 #define AMP_GAIN_PIN  25
 
-// ───────────────────────── Audio config ─────────────────────────
+// Audio config 
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_DMA_BUF_LEN 128
 #define AUDIO_DMA_BUF_CNT 8
@@ -18,7 +18,7 @@
 
 static bool audioInited = false;
 
-// ───────────────────────── Init ─────────────────────────
+// Init 
 void audio_init() {
   if (audioInited) return;
   audioInited = true;
@@ -27,7 +27,7 @@ void audio_init() {
   digitalWrite(AMP_SD_PIN, HIGH);
 
   pinMode(AMP_GAIN_PIN, OUTPUT);
-  digitalWrite(AMP_GAIN_PIN, HIGH); // louder (board dependent)
+  digitalWrite(AMP_GAIN_PIN, HIGH); 
 
   i2s_config_t cfg = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
@@ -55,7 +55,7 @@ void audio_init() {
   i2s_zero_dma_buffer(I2S_NUM_0);
 }
 
-// ───────────────────────── Beep generator ─────────────────────────
+//  Beep generator 
 void audio_playBeep(uint16_t freq, uint16_t duration_ms) {
   static int16_t buffer[256 * 2];
   float phase = 0.0f;
@@ -80,7 +80,7 @@ void audio_playBeep(uint16_t freq, uint16_t duration_ms) {
   }
 }
 
-// ───────────────────────── Semantic events ─────────────────────────
+// Semantic events
 void audio_playEvent(AudioEvent e) {
   switch (e) {
     case AUDIO_ROUND_START:
