@@ -5,7 +5,6 @@ const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // write / writeWithoutResponse
 const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notify
 
-// Commands your firmware should understand (text lines keep things easy)
 const CMD_START = "START\n";
 const CMD_STOP = "STOP\n";
 
@@ -36,9 +35,6 @@ export default function App() {
   const [moving, setMoving] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(true);
-  const CMD_BEEP1 = "BEEP1\n";
-  const CMD_BEEP2 = "BEEP2\n";
-  const [gameOn, setGameOn] = useState(false);
 
 
   // ─── Packet test state ────────────────────────────────────────────
@@ -87,7 +83,6 @@ export default function App() {
   const gattRef = useRef<GattStuff | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
-  const writeBusyRef = useRef(false); // NEW: prevent overlapping GATT writes
   const remainingRoundsRef = useRef<number>(0);
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
@@ -362,12 +357,6 @@ export default function App() {
 
     return writeQueueRef.current;
   }, [pushLog]);
-
-  const toggleMovement = useCallback(async () => {
-    const next = !moving;
-    setMoving(next);
-    await writeLine(next ? CMD_START : CMD_STOP);
-  }, [moving, writeLine]);
 
   const adjacency: Record<FaceId, FaceId[]> = {
     TOP: ["FRONT", "BACK", "LEFT", "RIGHT"],
@@ -1041,27 +1030,6 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
               </span>
             </div>
 
-            <button
-              className="menu-toggle top-icon account-btn"
-              aria-label="Account"
-              title="Account"
-            >
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                <circle
-                  cx="12"
-                  cy="8"
-                  r="4"
-                  stroke="#697586"
-                  strokeWidth="2"
-                />
-                <path
-                  d="M4 20c1.8-3.2 4.7-5 8-5s6.2 1.8 8 5"
-                  stroke="#697586"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -1083,108 +1051,6 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
                 )}
               </button>
 
-              <button className="nav-item" title="Connect">
-                {menuOpen ? (
-                  "Connect"
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M7 8h5a4 4 0 110 8H7"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                    <path
-                      d="M7 12h6"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              <button className="nav-item" title="LED Control">
-                {menuOpen ? (
-                  "LED Control"
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="5"
-                      stroke="#697586"
-                      strokeWidth="2"
-                    />
-                    <path
-                      d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              <button className="nav-item" title="Logs">
-                {menuOpen ? (
-                  "Logs"
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M5 4h14M5 8h14M5 12h10M5 16h8"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              <button className="nav-item" title="Settings">
-                {menuOpen ? (
-                  "Settings"
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
-                      stroke="#697586"
-                      strokeWidth="2"
-                    />
-                    <path
-                      d="M19.4 15a7.97 7.97 0 00.1-2l2-1-2-3-2 1a8.14 8.14 0 00-1.7-1l-.3-2.3h-4l-.3-2.3a8.14 8.14 0 00-1.7 1l-2-1-2 3 2 1a8.5 8.5 0 000 2l-2 1 2 3 2-1c.5.4 1.1.7 1.7 1l.3 2.3h4l.3-2.3c.6-.3 1.2-.6 1.7-1l2 1 2-3-2-1z"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              <div className="divider" />
-
-              <button className="nav-item" title="About">
-                {menuOpen ? (
-                  "About"
-                ) : (
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="#697586"
-                      strokeWidth="2"
-                    />
-                    <path
-                      d="M12 8h.01M11 12h2v5h-2z"
-                      stroke="#697586"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                )}
-              </button>
             </nav>
           </aside>
 
@@ -1196,61 +1062,6 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
                 {name && isConnected ? ` — ${name}` : ""}
               </div>
 
-              <div className="lead">
-                Connect to your cube, then start or stop LED movement. Live
-                results, packet test, and manual commands appear below.
-              </div>
-
-              <div className="actions subtle">
-                <button
-                  className="btn btn-neutral"
-                  onClick={toggleMovement}
-                  disabled={!isConnected}
-                >
-                  {moving ? "Stop LED movement" : "Start LED movement"}
-                </button>
-
-                <button
-                  className="btn btn-neutral"
-                  onClick={() => writeLine(CMD_BEEP1)}
-                  disabled={!isConnected}
-                  title="Play 880 Hz beep"
-                >
-                  Beep 1
-                </button>
-
-                <button
-                  className="btn btn-neutral"
-                  onClick={() => writeLine(CMD_BEEP2)}
-                  disabled={!isConnected}
-                  title="Play 1760 Hz beep"
-                >
-                  Beep 2
-                </button>
-                <br></br>
-                <button
-                  className="btn btn-neutral"
-                  disabled={!isConnected}
-                  onClick={() => {
-                    const next = !gameOn;
-                    setGameOn(next);
-                    writeLine(`GAME ${next ? 1 : 0}`);
-                  }}
-                >
-                  {gameOn ? "Stop game" : "Start game"}
-                </button>
-
-                <button
-                  className="btn btn-neutral"
-                  disabled={!isConnected || !gameOn}
-                  onClick={() => writeLine("NEW_FACE")}
-                >
-                  New face
-                </button>
-
-              </div>
-
-
               <div className="card">
                 <h3>Results from ESP</h3>
                 <div ref={logBoxRef} className="log">
@@ -1260,25 +1071,6 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
 
               <div className="card">
                 <h3>Packet test</h3>
-                <div className="actions subtle">
-                  <button
-                    className="btn btn-neutral"
-                    disabled={!isConnected}
-                    onClick={() => {
-                      if (!testRunning) {
-                        // reset stats on start
-                        setSentCount(0);
-                        setRecvCount(0);
-                        setAvgRttMs(null);
-                        pendingRef.current.clear();
-                        setNextSeq(1);
-                      }
-                      setTestRunning((r) => !r);
-                    }}
-                  >
-                    {testRunning ? "Stop test" : "Start packet test"}
-                  </button>
-                </div>
 
                 <div className="metrics">
                   <div>Total sent: {sentCount}</div>
@@ -1312,6 +1104,25 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
                     Restart ping (ESP + App)
                   </button>
                 </div>
+                <div className="actions subtle">
+                  <button
+                    className="btn btn-neutral"
+                    disabled={!isConnected}
+                    onClick={() => {
+                      if (!testRunning) {
+                        // reset stats on start
+                        setSentCount(0);
+                        setRecvCount(0);
+                        setAvgRttMs(null);
+                        pendingRef.current.clear();
+                        setNextSeq(1);
+                      }
+                      setTestRunning((r) => !r);
+                    }}
+                  >
+                    {testRunning ? "Stop test" : "Start packet test"}
+                  </button>
+                </div>
               </div>
 
               <div className="card">
@@ -1324,7 +1135,7 @@ function faceBasis(f: FaceId): { up: Vec3; right: Vec3 } {
                   <input
                     type="text"
                     className="command-input"
-                    placeholder='e.g. SET 0 1 or RESTART PING'
+                    placeholder='e.g. GAME START ...'
                     value={command}
                     onChange={(e) => setCommand(e.target.value)}
                     disabled={!isConnected}
