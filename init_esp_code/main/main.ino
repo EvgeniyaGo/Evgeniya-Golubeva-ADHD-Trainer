@@ -36,12 +36,26 @@ struct SnakeApple {
   bool active;
 };
 
-static SnakeApple snakeApple = { FACE_UP, 2, 2, false };
-static uint16_t snakeScore = 0;
-static SnakeHead snakeHead = { FACE_UP, 5, 5 };
+
+static FaceId lastSnakeInputFace = FACE_UNKNOWN;
+static const uint8_t MAX_SNAKE_LENGTH = 80;
+static uint8_t snakeLength = 4;
+
+static SnakeHead snakeBody[MAX_SNAKE_LENGTH] = {
+  { FACE_UP, 5, 5 },
+  { FACE_UP, 4, 5 },
+  { FACE_UP, 3, 5 },
+  { FACE_UP, 2, 5 }
+};
+
 static SnakeDir snakeDir = SNAKE_RIGHT;
 static uint32_t lastSnakeMoveMs = 0;
-static FaceId lastSnakeInputFace = FACE_UNKNOWN;
+static bool snakeGameOver = false;
+static bool snakeGrowPending = false;
+
+static SnakeApple snakeApple = { FACE_UP, 7, 5, false };
+static uint16_t snakeScore = 0;
+
 static const uint32_t SNAKE_MOVE_INTERVAL_MS = 400;
 
 
@@ -726,6 +740,26 @@ void worldPointToSnakePixel(FaceId face, Vec3 p, int8_t &xOut, int8_t &yOut) {
   yOut = y;
 }
 
+bool sameSnakePosition(SnakeHead a, SnakeHead b) {
+  return a.face == b.face && a.x == b.x && a.y == b.y;
+}
+
+bool SnakeHeadHitsBody() {
+  for (uint8_t i = 1; i < snakeLength; i++) {
+    if (sameSnakePosition(snakeBody[0], snakeBody[i])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void growSnakeNextMove() {
+  if (snakeLength < MAX_SNAKE_LENGTH) {
+    snakeGrowPending = true;
+  }
+}
+
 bool worldVectorToSnakeDir(FaceId face, Vec3 worldDir, SnakeDir &outDir) {
   Vec3 up, right;
   faceBasis(face, up, right);
@@ -767,25 +801,30 @@ void updateSnakeDirectionFromActiveFace(FaceId activeFace) {
 
   lastSnakeInputFace = activeFace;
 
-  if (activeFace == snakeHead.face || isOppositeFace(activeFace, snakeHead.face)) {
+  if (activeFace == snakeBody[0].face || isOppositeFace(activeFace, snakeBody[0].face)) {
     return;
   }
 
-  if (!areFacesAdjacent(activeFace, snakeHead.face)) {
+  if (!areFacesAdjacent(activeFace, snakeBody[0].face)) {
     return;
   }
 
   Vec3 commandWorldDir = faceNormal(activeFace);
 
   SnakeDir newDir;
-  if (worldVectorToSnakeDir(snakeHead.face, commandWorldDir, newDir)) {
+  if (worldVectorToSnakeDir(snakeBody[0].face, commandWorldDir, newDir)) {
     snakeDir = newDir;
   }
 }
 
 void moveSnakeHeadOneStep() {
-  int8_t nextX = snakeHead.x;
-  int8_t nextY = snakeHead.y;
+  if (snakeGameOver) return;
+
+  SnakeHead oldHead = snakeBody[0];
+  SnakeHead newHead = oldHead;
+
+  int8_t nextX = oldHead.x;
+  int8_t nextY = oldHead.y;
 
   switch (snakeDir) {
     case SNAKE_UP:
@@ -805,93 +844,136 @@ void moveSnakeHeadOneStep() {
       break;
   }
 
-  // Normal move inside the same face.
   if (
     nextX >= 0 && nextX < MATRIX_WIDTH &&
     nextY >= 0 && nextY < MATRIX_HEIGHT
   ) {
-    snakeHead.x = nextX;
-    snakeHead.y = nextY;
-    return;
+    newHead.x = nextX;
+    newHead.y = nextY;
+  } else {
+    FaceId oldFace = oldHead.face;
+    Vec3 oldNormal = faceNormal(oldFace);
+
+    Vec3 movementWorldDir = snakeDirToWorldVector(oldFace, snakeDir);
+
+    FaceId newFace = faceFromNormalVector(movementWorldDir);
+    if (newFace == FACE_UNKNOWN) {
+      snakeGameOver = true;
+      return;
+    }
+
+    Vec3 edgePoint = snakePixelToWorldPoint(oldFace, oldHead.x, oldHead.y);
+
+    int8_t wrappedX = 0;
+    int8_t wrappedY = 0;
+    worldPointToSnakePixel(newFace, edgePoint, wrappedX, wrappedY);
+
+    newHead.face = newFace;
+    newHead.x = wrappedX;
+    newHead.y = wrappedY;
+
+    Vec3 continuedWorldDir = vecNeg(oldNormal);
+
+    SnakeDir continuedDir;
+    if (worldVectorToSnakeDir(newFace, continuedWorldDir, continuedDir)) {
+      snakeDir = continuedDir;
+    }
   }
 
-  // Edge wrapping.
-  FaceId oldFace = snakeHead.face;
-  Vec3 oldNormal = faceNormal(oldFace);
+  uint8_t newLength = snakeLength;
 
-  // Direction of movement on the current face.
-Vec3 movementWorldDir = snakeDirToWorldVector(oldFace, snakeDir);
-
-  // The face we enter is the face whose normal points in the movement direction.
-  FaceId newFace = faceFromNormalVector(movementWorldDir);
-  if (newFace == FACE_UNKNOWN) {
-    return;
+  if (snakeGrowPending && snakeLength < MAX_SNAKE_LENGTH) {
+    newLength++;
+    snakeGrowPending = false;
   }
 
-  // Keep the edge coordinate.
-  Vec3 edgePoint = snakePixelToWorldPoint(oldFace, snakeHead.x, snakeHead.y);
+  for (int i = newLength - 1; i > 0; i--) {
+    snakeBody[i] = snakeBody[i - 1];
+  }
 
-  int8_t wrappedX = 0;
-  int8_t wrappedY = 0;
-  worldPointToSnakePixel(newFace, edgePoint, wrappedX, wrappedY);
+  snakeBody[0] = newHead;
+  snakeLength = newLength;
 
-  snakeHead.face = newFace;
-  snakeHead.x = wrappedX;
-  snakeHead.y = wrappedY;
-
-  // After rolling over the edge, movement continues away from the old face.
-// Keep moving in the same global direction after crossing the edge.
-Vec3 continuedWorldDir = vecNeg(oldNormal);
-
-SnakeDir continuedDir;
-if (worldVectorToSnakeDir(newFace, continuedWorldDir, continuedDir)) {
-  snakeDir = continuedDir;
-}
+  if (SnakeHeadHitsBody()) {
+    snakeGameOver = true;
+  }
 }
 
 bool sameSnakeCell(FaceId faceA, int8_t xA, int8_t yA, FaceId faceB, int8_t xB, int8_t yB) {
   return faceA == faceB && xA == xB && yA == yB;
 }
 
+bool positionIsOnSnake(FaceId face, int8_t x, int8_t y) {
+  for (uint8_t i = 0; i < snakeLength; i++) {
+    if (
+      snakeBody[i].face == face &&
+      snakeBody[i].x == x &&
+      snakeBody[i].y == y
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void spawnSnakeApple() {
-  snakeApple.face = snakeHead.face;
+  snakeApple.face = snakeBody[0].face;
+  snakeApple.active = true;
 
   do {
     snakeApple.x = random(0, MATRIX_WIDTH);
     snakeApple.y = random(0, MATRIX_HEIGHT);
-  } while (sameSnakeCell(
-    snakeApple.face, snakeApple.x, snakeApple.y,
-    snakeHead.face, snakeHead.x, snakeHead.y
-  ));
-
-  snakeApple.active = true;
-
-  Serial.print("[SNAKE] apple spawned x=");
-  Serial.print(snakeApple.x);
-  Serial.print(" y=");
-  Serial.println(snakeApple.y);
+  } while (positionIsOnSnake(snakeApple.face, snakeApple.x, snakeApple.y));
 }
 
 void checkSnakeAppleCollision() {
   if (!snakeApple.active) return;
 
-  if (sameSnakeCell(
-    snakeHead.face, snakeHead.x, snakeHead.y,
-    snakeApple.face, snakeApple.x, snakeApple.y
-  )) {
+  if (
+    snakeBody[0].face == snakeApple.face &&
+    snakeBody[0].x == snakeApple.x &&
+    snakeBody[0].y == snakeApple.y
+  ) {
     snakeScore++;
-    Serial.print("[SNAKE] apple eaten, score=");
-    Serial.println(snakeScore);
-
+    growSnakeNextMove();
     spawnSnakeApple();
+
+    Serial.print("[SNAKE] score=");
+    Serial.println(snakeScore);
   }
 }
 
 void renderSnakeTest() {
   clearAllFaces();
-  drawPixelOnFace(snakeHead.face, snakeHead.x, snakeHead.y, COLOR_GREEN, true);
+if (snakeApple.active) {
+  drawPixelOnFace(
+    snakeApple.face,
+    snakeApple.x,
+    snakeApple.y,
+    COLOR_RED,
+    false
+  );
 }
 
+  for (uint8_t i = 1; i < snakeLength; i++) {
+    drawPixelOnFace(
+      snakeBody[i].face,
+      snakeBody[i].x,
+      snakeBody[i].y,
+      COLOR_GREEN,
+      false
+    );
+  }
+
+  drawPixelOnFace(
+    snakeBody[0].face,
+    snakeBody[0].x,
+    snakeBody[0].y,
+    snakeGameOver ? COLOR_RED : COLOR_GREEN,
+    false
+  );
+}
 const char* snakeDirName(SnakeDir dir) {
   switch (dir) {
     case SNAKE_UP: return "UP";
@@ -959,6 +1041,8 @@ void setup() {
   clearAllFaces();
 
   lastRestart = millis();
+
+spawnSnakeApple();
 }
 
 // Called from BLE RX when frontend says "ROUND START"
@@ -979,19 +1063,27 @@ void loop() {
   if (now - lastSnakeMoveMs >= SNAKE_MOVE_INTERVAL_MS) {
     lastSnakeMoveMs = now;
 
-    moveSnakeHeadOneStep();
+    if (!snakeGameOver) {
+      moveSnakeHeadOneStep();
+    }
+
     renderSnakeTest();
 
-Serial.print("[SNAKE] headFace=");
-Serial.print(parseFace(snakeHead.face));
-Serial.print(" activeFace=");
-Serial.print(parseFace(imu.upFace));
-Serial.print(" x=");
-Serial.print(snakeHead.x);
-Serial.print(" y=");
-Serial.print(snakeHead.y);
-Serial.print(" dir=");
-Serial.println(snakeDirName(snakeDir));  }
+    Serial.print("[SNAKE] headFace=");
+    Serial.print(parseFace(snakeBody[0].face));
+    Serial.print(" activeFace=");
+    Serial.print(parseFace(imu.upFace));
+    Serial.print(" x=");
+    Serial.print(snakeBody[0].x);
+    Serial.print(" y=");
+    Serial.print(snakeBody[0].y);
+    Serial.print(" dir=");
+    Serial.print(snakeDirName(snakeDir));
+    Serial.print(" length=");
+    Serial.print(snakeLength);
+    Serial.print(" gameOver=");
+    Serial.println(snakeGameOver ? "YES" : "NO");
+  }
 
   flushDisplay();
   delay(20);
