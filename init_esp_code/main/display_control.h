@@ -41,4 +41,6 @@ ColorShades getColorShades(ColorId color);
 void setFaceRotation(FaceId face, int8_t rotationSteps);
 void renderFace(FaceId face);
 
+void drawPixelOnFace(FaceId face, uint8_t x, uint8_t y, ColorId color, bool clearBefore = true);
+
 #endif

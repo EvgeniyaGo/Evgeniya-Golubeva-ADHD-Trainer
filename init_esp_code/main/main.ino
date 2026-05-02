@@ -14,6 +14,37 @@
 
 #define HOLD_TIME_MS 400
 
+#define SNAKE_TEST_MODE 1
+
+enum SnakeDir {
+  SNAKE_UP,
+  SNAKE_DOWN,
+  SNAKE_LEFT,
+  SNAKE_RIGHT
+};
+
+struct SnakeHead {
+  FaceId face;
+  int8_t x;
+  int8_t y;
+};
+
+struct SnakeApple {
+  FaceId face;
+  int8_t x;
+  int8_t y;
+  bool active;
+};
+
+static SnakeApple snakeApple = { FACE_UP, 2, 2, false };
+static uint16_t snakeScore = 0;
+static SnakeHead snakeHead = { FACE_UP, 5, 5 };
+static SnakeDir snakeDir = SNAKE_RIGHT;
+static uint32_t lastSnakeMoveMs = 0;
+static FaceId lastSnakeInputFace = FACE_UNKNOWN;
+static const uint32_t SNAKE_MOVE_INTERVAL_MS = 400;
+
+
 // ADXL orientation state
 static FaceId currentTargetFace = FACE_UNKNOWN;
 ImuState imu;
@@ -223,6 +254,7 @@ void faceBasis(FaceId f, Vec3 &up, Vec3 &right) {
       break;
   }
 }
+
 
 bool arrowFromTo(FaceId from, FaceId to, ShapeId &arrowOut) {
   if (from == FACE_UNKNOWN || to == FACE_UNKNOWN) return false;
@@ -594,6 +626,283 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 
 
 
+bool isOppositeFace(FaceId a, FaceId b) {
+  return
+    (a == FACE_UP && b == FACE_DOWN) ||
+    (a == FACE_DOWN && b == FACE_UP) ||
+    (a == FACE_LEFT && b == FACE_RIGHT) ||
+    (a == FACE_RIGHT && b == FACE_LEFT) ||
+    (a == FACE_FRONT && b == FACE_BACK) ||
+    (a == FACE_BACK && b == FACE_FRONT);
+}
+
+
+Vec3 vecNeg(Vec3 v) {
+  return { -v.x, -v.y, -v.z };
+}
+
+Vec3 vecScale(Vec3 v, float s) {
+  return { v.x * s, v.y * s, v.z * s };
+}
+
+Vec3 vecAdd(Vec3 a, Vec3 b) {
+  return { a.x + b.x, a.y + b.y, a.z + b.z };
+}
+
+float vecDot(Vec3 a, Vec3 b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+FaceId faceFromNormalVector(Vec3 n) {
+  if (round(n.x) == 0 && round(n.y) == 0 && round(n.z) == 1) return FACE_UP;
+  if (round(n.x) == 0 && round(n.y) == 0 && round(n.z) == -1) return FACE_DOWN;
+  if (round(n.x) == 0 && round(n.y) == 1 && round(n.z) == 0) return FACE_LEFT;
+  if (round(n.x) == 0 && round(n.y) == -1 && round(n.z) == 0) return FACE_RIGHT;
+  if (round(n.x) == 1 && round(n.y) == 0 && round(n.z) == 0) return FACE_FRONT;
+  if (round(n.x) == -1 && round(n.y) == 0 && round(n.z) == 0) return FACE_BACK;
+
+  return FACE_UNKNOWN;
+}
+
+Vec3 snakeDirToWorldVector(FaceId face, SnakeDir dir) {
+  Vec3 up, right;
+  faceBasis(face, up, right);
+
+  switch (dir) {
+    case SNAKE_UP:
+      return up;
+
+    case SNAKE_DOWN:
+      return vecNeg(up);
+
+    case SNAKE_RIGHT:
+      return right;
+
+    case SNAKE_LEFT:
+      return vecNeg(right);
+
+    default:
+      return { 0, 0, 0 };
+  }
+}
+
+Vec3 snakePixelToWorldPoint(FaceId face, int8_t x, int8_t y) {
+  Vec3 normal = faceNormal(face);
+
+  Vec3 up, right;
+  faceBasis(face, up, right);
+
+  const float bound = MATRIX_WIDTH - 1;
+
+  float localRight = 2.0f * x - bound;
+  float localUp = bound - 2.0f * y;
+
+  Vec3 p = vecScale(normal, bound);
+  p = vecAdd(p, vecScale(right, localRight));
+  p = vecAdd(p, vecScale(up, localUp));
+
+  return p;
+}
+
+void worldPointToSnakePixel(FaceId face, Vec3 p, int8_t &xOut, int8_t &yOut) {
+  Vec3 up, right;
+  faceBasis(face, up, right);
+
+  const float bound = MATRIX_WIDTH - 1;
+
+  float localRight = vecDot(p, right);
+  float localUp = vecDot(p, up);
+
+  int x = round((localRight + bound) / 2.0f);
+  int y = round((bound - localUp) / 2.0f);
+
+  if (x < 0) x = 0;
+  if (x >= MATRIX_WIDTH) x = MATRIX_WIDTH - 1;
+
+  if (y < 0) y = 0;
+  if (y >= MATRIX_HEIGHT) y = MATRIX_HEIGHT - 1;
+
+  xOut = x;
+  yOut = y;
+}
+
+bool worldVectorToSnakeDir(FaceId face, Vec3 worldDir, SnakeDir &outDir) {
+  Vec3 up, right;
+  faceBasis(face, up, right);
+
+  int du = round(worldDir.x * up.x + worldDir.y * up.y + worldDir.z * up.z);
+  int dr = round(worldDir.x * right.x + worldDir.y * right.y + worldDir.z * right.z);
+
+  if (du == 1) {
+    outDir = SNAKE_UP;
+    return true;
+  }
+
+  if (du == -1) {
+    outDir = SNAKE_DOWN;
+    return true;
+  }
+
+  if (dr == 1) {
+    outDir = SNAKE_RIGHT;
+    return true;
+  }
+
+  if (dr == -1) {
+    outDir = SNAKE_LEFT;
+    return true;
+  }
+
+  return false;
+}
+
+void updateSnakeDirectionFromActiveFace(FaceId activeFace) {
+  if (activeFace == FACE_UNKNOWN) return;
+
+  // Do not continuously re-apply the same physical cube orientation.
+  // A direction command happens only when the player changes the active face.
+  if (activeFace == lastSnakeInputFace) {
+    return;
+  }
+
+  lastSnakeInputFace = activeFace;
+
+  if (activeFace == snakeHead.face || isOppositeFace(activeFace, snakeHead.face)) {
+    return;
+  }
+
+  if (!areFacesAdjacent(activeFace, snakeHead.face)) {
+    return;
+  }
+
+  Vec3 commandWorldDir = faceNormal(activeFace);
+
+  SnakeDir newDir;
+  if (worldVectorToSnakeDir(snakeHead.face, commandWorldDir, newDir)) {
+    snakeDir = newDir;
+  }
+}
+
+void moveSnakeHeadOneStep() {
+  int8_t nextX = snakeHead.x;
+  int8_t nextY = snakeHead.y;
+
+  switch (snakeDir) {
+    case SNAKE_UP:
+      nextY--;
+      break;
+
+    case SNAKE_DOWN:
+      nextY++;
+      break;
+
+    case SNAKE_LEFT:
+      nextX--;
+      break;
+
+    case SNAKE_RIGHT:
+      nextX++;
+      break;
+  }
+
+  // Normal move inside the same face.
+  if (
+    nextX >= 0 && nextX < MATRIX_WIDTH &&
+    nextY >= 0 && nextY < MATRIX_HEIGHT
+  ) {
+    snakeHead.x = nextX;
+    snakeHead.y = nextY;
+    return;
+  }
+
+  // Edge wrapping.
+  FaceId oldFace = snakeHead.face;
+  Vec3 oldNormal = faceNormal(oldFace);
+
+  // Direction of movement on the current face.
+Vec3 movementWorldDir = snakeDirToWorldVector(oldFace, snakeDir);
+
+  // The face we enter is the face whose normal points in the movement direction.
+  FaceId newFace = faceFromNormalVector(movementWorldDir);
+  if (newFace == FACE_UNKNOWN) {
+    return;
+  }
+
+  // Keep the edge coordinate.
+  Vec3 edgePoint = snakePixelToWorldPoint(oldFace, snakeHead.x, snakeHead.y);
+
+  int8_t wrappedX = 0;
+  int8_t wrappedY = 0;
+  worldPointToSnakePixel(newFace, edgePoint, wrappedX, wrappedY);
+
+  snakeHead.face = newFace;
+  snakeHead.x = wrappedX;
+  snakeHead.y = wrappedY;
+
+  // After rolling over the edge, movement continues away from the old face.
+// Keep moving in the same global direction after crossing the edge.
+Vec3 continuedWorldDir = vecNeg(oldNormal);
+
+SnakeDir continuedDir;
+if (worldVectorToSnakeDir(newFace, continuedWorldDir, continuedDir)) {
+  snakeDir = continuedDir;
+}
+}
+
+bool sameSnakeCell(FaceId faceA, int8_t xA, int8_t yA, FaceId faceB, int8_t xB, int8_t yB) {
+  return faceA == faceB && xA == xB && yA == yB;
+}
+
+void spawnSnakeApple() {
+  snakeApple.face = snakeHead.face;
+
+  do {
+    snakeApple.x = random(0, MATRIX_WIDTH);
+    snakeApple.y = random(0, MATRIX_HEIGHT);
+  } while (sameSnakeCell(
+    snakeApple.face, snakeApple.x, snakeApple.y,
+    snakeHead.face, snakeHead.x, snakeHead.y
+  ));
+
+  snakeApple.active = true;
+
+  Serial.print("[SNAKE] apple spawned x=");
+  Serial.print(snakeApple.x);
+  Serial.print(" y=");
+  Serial.println(snakeApple.y);
+}
+
+void checkSnakeAppleCollision() {
+  if (!snakeApple.active) return;
+
+  if (sameSnakeCell(
+    snakeHead.face, snakeHead.x, snakeHead.y,
+    snakeApple.face, snakeApple.x, snakeApple.y
+  )) {
+    snakeScore++;
+    Serial.print("[SNAKE] apple eaten, score=");
+    Serial.println(snakeScore);
+
+    spawnSnakeApple();
+  }
+}
+
+void renderSnakeTest() {
+  clearAllFaces();
+  drawPixelOnFace(snakeHead.face, snakeHead.x, snakeHead.y, COLOR_GREEN, true);
+}
+
+const char* snakeDirName(SnakeDir dir) {
+  switch (dir) {
+    case SNAKE_UP: return "UP";
+    case SNAKE_DOWN: return "DOWN";
+    case SNAKE_LEFT: return "LEFT";
+    case SNAKE_RIGHT: return "RIGHT";
+    default: return "?";
+  }
+}
+
+
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   delay(200);
@@ -664,6 +973,32 @@ void loop() {
   imu = getImuState();
   uint32_t now = millis();
 
+#if SNAKE_TEST_MODE
+  updateSnakeDirectionFromActiveFace(imu.upFace);
+
+  if (now - lastSnakeMoveMs >= SNAKE_MOVE_INTERVAL_MS) {
+    lastSnakeMoveMs = now;
+
+    moveSnakeHeadOneStep();
+    renderSnakeTest();
+
+Serial.print("[SNAKE] headFace=");
+Serial.print(parseFace(snakeHead.face));
+Serial.print(" activeFace=");
+Serial.print(parseFace(imu.upFace));
+Serial.print(" x=");
+Serial.print(snakeHead.x);
+Serial.print(" y=");
+Serial.print(snakeHead.y);
+Serial.print(" dir=");
+Serial.println(snakeDirName(snakeDir));  }
+
+  flushDisplay();
+  delay(20);
+  return;
+#endif
+}
+/*
   // DEBUG
   if (now - lastDebugPrintMs >= 5000) {
     lastDebugPrintMs = now;
@@ -958,3 +1293,4 @@ render_tail:
 
   delay(20);
 }
+*/
