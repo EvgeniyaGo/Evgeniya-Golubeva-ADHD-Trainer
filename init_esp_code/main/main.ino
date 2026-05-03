@@ -39,7 +39,7 @@ struct SnakeApple {
 
 static FaceId lastSnakeInputFace = FACE_UNKNOWN;
 static const uint8_t MAX_SNAKE_LENGTH = 80;
-static uint8_t snakeLength = 4;
+static uint8_t snakeLength = 1;
 
 static SnakeHead snakeBody[MAX_SNAKE_LENGTH] = {
   { FACE_UP, 5, 5 },
@@ -53,7 +53,8 @@ static uint32_t lastSnakeMoveMs = 0;
 static bool snakeGameOver = false;
 static bool snakeGrowPending = false;
 
-static SnakeApple snakeApple = { FACE_UP, 7, 5, false };
+static const uint8_t MAX_SNAKE_APPLES = 3;
+static SnakeApple snakeApples[MAX_SNAKE_APPLES];
 static uint16_t snakeScore = 0;
 
 static const uint32_t SNAKE_MOVE_INTERVAL_MS = 400;
@@ -917,45 +918,91 @@ bool positionIsOnSnake(FaceId face, int8_t x, int8_t y) {
   return false;
 }
 
-void spawnSnakeApple() {
-  snakeApple.face = snakeBody[0].face;
-  snakeApple.active = true;
+bool positionIsOnAppleExcept(FaceId face, int8_t x, int8_t y, uint8_t ignoreIndex) {
+  for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+    if (i == ignoreIndex) continue;
+    if (!snakeApples[i].active) continue;
+
+    if (
+      snakeApples[i].face == face &&
+      snakeApples[i].x == x &&
+      snakeApples[i].y == y
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool positionIsFreeForApple(FaceId face, int8_t x, int8_t y, uint8_t ignoreIndex) {
+  if (positionIsOnSnake(face, x, y)) return false;
+  if (positionIsOnAppleExcept(face, x, y, ignoreIndex)) return false;
+
+  return true;
+}
+
+void spawnSnakeAppleInSlot(uint8_t index) {
+  if (index >= MAX_SNAKE_APPLES) return;
+
+  SnakeApple &apple = snakeApples[index];
+
+  apple.face = snakeBody[0].face;
+
+  uint16_t attempts = 0;
 
   do {
-    snakeApple.x = random(0, MATRIX_WIDTH);
-    snakeApple.y = random(0, MATRIX_HEIGHT);
-  } while (positionIsOnSnake(snakeApple.face, snakeApple.x, snakeApple.y));
+    apple.x = random(0, MATRIX_WIDTH);
+    apple.y = random(0, MATRIX_HEIGHT);
+    attempts++;
+  } while (
+    !positionIsFreeForApple(apple.face, apple.x, apple.y, index) &&
+    attempts < 200
+  );
+
+  if (attempts >= 200) {
+    apple.active = false;
+    return;
+  }
+
+  apple.active = true;
 }
 
 void checkSnakeAppleCollision() {
-  if (!snakeApple.active) return;
+  for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+    if (!snakeApples[i].active) continue;
 
-  if (
-    snakeBody[0].face == snakeApple.face &&
-    snakeBody[0].x == snakeApple.x &&
-    snakeBody[0].y == snakeApple.y
-  ) {
-    snakeScore++;
-    growSnakeNextMove();
-    spawnSnakeApple();
+    if (
+      snakeBody[0].face == snakeApples[i].face &&
+      snakeBody[0].x == snakeApples[i].x &&
+      snakeBody[0].y == snakeApples[i].y
+    ) {
+      snakeScore++;
+      growSnakeNextMove();
 
-    Serial.print("[SNAKE] score=");
-    Serial.println(snakeScore);
+      spawnSnakeAppleInSlot(i);
+
+      Serial.print("[SNAKE] score=");
+      Serial.println(snakeScore);
+    }
   }
 }
 
+
 void renderSnakeTest() {
   clearAllFaces();
-if (snakeApple.active) {
+
+for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+  if (!snakeApples[i].active) continue;
+
   drawPixelOnFace(
-    snakeApple.face,
-    snakeApple.x,
-    snakeApple.y,
+    snakeApples[i].face,
+    snakeApples[i].x,
+    snakeApples[i].y,
     COLOR_RED,
     false
   );
 }
-
   for (uint8_t i = 1; i < snakeLength; i++) {
     drawPixelOnFace(
       snakeBody[i].face,
@@ -1042,7 +1089,9 @@ void setup() {
 
   lastRestart = millis();
 
-spawnSnakeApple();
+for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+  spawnSnakeAppleInSlot(i);
+}
 }
 
 // Called from BLE RX when frontend says "ROUND START"
@@ -1065,6 +1114,7 @@ void loop() {
 
     if (!snakeGameOver) {
       moveSnakeHeadOneStep();
+      checkSnakeAppleCollision();    
     }
 
     renderSnakeTest();
