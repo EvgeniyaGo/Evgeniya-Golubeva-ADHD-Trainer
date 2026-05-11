@@ -213,6 +213,17 @@ void recolorShape(FaceId face, ShapeId shape, ColorId newColor) {
   renderFace(face);
 }
 
+void clearAllFacesNoShow() {
+  for (uint8_t face = 0; face < FACE_COUNT; face++) {
+    for (uint8_t i = 0; i < MAX_LAYERS_PER_FACE; i++) {
+      faceLayers[face][i].active = false;
+    }
+
+    faceStrips[face]->clear();
+    staticShape[face].active = false;
+  }
+}
+
 // Render shape layer to buffer
 void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation, FaceId face) {
   const char* shapeDef = getShapeDefinition(layer.shapeId);

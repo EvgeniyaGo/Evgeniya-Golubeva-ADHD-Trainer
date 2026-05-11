@@ -25,6 +25,7 @@
 void initDisplay();
 
 void clearFace(FaceId face);
+void clearAllFacesNoShow();
 void clearAllFaces();
 void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, uint32_t timeout = 0); // Add/update a shape layer on a face. -timeout is used only for MODE_TIMED (ms). For other modes you can pass 0.
 void deleteShape(FaceId face, ShapeId shape);

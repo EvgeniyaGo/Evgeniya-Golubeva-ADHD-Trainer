@@ -94,6 +94,16 @@ void audio_playEvent(AudioEvent e) {
     case AUDIO_FAIL:
       audio_playBeep(400, 200);
       break;
+
+    case AUDIO_SNAKE_APPLE:
+      audio_playBeep(1400, 45);
+      audio_playBeep(1900, 55);
+      break;
+
+    case AUDIO_SNAKE_GAME_OVER:
+      audio_playBeep(350, 120);
+      audio_playBeep(220, 180);
+      break;
   }
 }
 

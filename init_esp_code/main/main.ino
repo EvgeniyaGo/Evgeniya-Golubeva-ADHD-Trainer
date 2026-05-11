@@ -813,9 +813,17 @@ void updateSnakeDirectionFromActiveFace(FaceId activeFace) {
   Vec3 commandWorldDir = faceNormal(activeFace);
 
   SnakeDir newDir;
-  if (worldVectorToSnakeDir(snakeBody[0].face, commandWorldDir, newDir)) {
+if (worldVectorToSnakeDir(snakeBody[0].face, commandWorldDir, newDir)) {
+  if (!isOppositeSnakeDir(newDir, snakeDir)) {
     snakeDir = newDir;
   }
+}
+}
+
+void snakeDieAndReset() {
+  audio_playEvent(AUDIO_SNAKE_GAME_OVER);
+  delay(350);
+  resetSnakeGame();
 }
 
 void moveSnakeHeadOneStep() {
@@ -858,10 +866,11 @@ void moveSnakeHeadOneStep() {
     Vec3 movementWorldDir = snakeDirToWorldVector(oldFace, snakeDir);
 
     FaceId newFace = faceFromNormalVector(movementWorldDir);
-    if (newFace == FACE_UNKNOWN) {
-      snakeGameOver = true;
-      return;
-    }
+if (newFace == FACE_UNKNOWN) {
+audio_playEvent(AUDIO_SNAKE_GAME_OVER);
+snakeDieAndReset();
+return;
+}
 
     Vec3 edgePoint = snakePixelToWorldPoint(oldFace, oldHead.x, oldHead.y);
 
@@ -895,10 +904,10 @@ void moveSnakeHeadOneStep() {
   snakeBody[0] = newHead;
   snakeLength = newLength;
 
-  if (SnakeHeadHitsBody()) {
-    snakeGameOver = true;
-  }
-}
+if (SnakeHeadHitsBody()) {
+snakeDieAndReset();
+return;
+}}
 
 bool sameSnakeCell(FaceId faceA, int8_t xA, int8_t yA, FaceId faceB, int8_t xB, int8_t yB) {
   return faceA == faceB && xA == xB && yA == yB;
@@ -947,20 +956,19 @@ void spawnSnakeAppleInSlot(uint8_t index) {
 
   SnakeApple &apple = snakeApples[index];
 
-  apple.face = snakeBody[0].face;
-
   uint16_t attempts = 0;
 
   do {
+    apple.face = (FaceId)random(0, FACE_COUNT);
     apple.x = random(0, MATRIX_WIDTH);
     apple.y = random(0, MATRIX_HEIGHT);
     attempts++;
   } while (
     !positionIsFreeForApple(apple.face, apple.x, apple.y, index) &&
-    attempts < 200
+    attempts < 300
   );
 
-  if (attempts >= 200) {
+  if (attempts >= 300) {
     apple.active = false;
     return;
   }
@@ -977,20 +985,24 @@ void checkSnakeAppleCollision() {
       snakeBody[0].x == snakeApples[i].x &&
       snakeBody[0].y == snakeApples[i].y
     ) {
-      snakeScore++;
-      growSnakeNextMove();
+snakeScore++;
+growSnakeNextMove();
 
-      spawnSnakeAppleInSlot(i);
+audio_playEvent(AUDIO_SNAKE_APPLE);
 
-      Serial.print("[SNAKE] score=");
-      Serial.println(snakeScore);
+spawnSnakeAppleInSlot(i);
+
+Serial.print("[SNAKE] score=");
+Serial.print(snakeScore);
+Serial.print(" length=");
+Serial.println(snakeLength);
     }
   }
 }
 
 
 void renderSnakeTest() {
-  clearAllFaces();
+  clearAllFacesNoShow();
 
 for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
   if (!snakeApples[i].active) continue;
@@ -1030,6 +1042,44 @@ const char* snakeDirName(SnakeDir dir) {
     default: return "?";
   }
 }
+
+bool isOppositeSnakeDir(SnakeDir a, SnakeDir b) {
+  return
+    (a == SNAKE_UP && b == SNAKE_DOWN) ||
+    (a == SNAKE_DOWN && b == SNAKE_UP) ||
+    (a == SNAKE_LEFT && b == SNAKE_RIGHT) ||
+    (a == SNAKE_RIGHT && b == SNAKE_LEFT);
+}
+
+void resetSnakeGame() {
+  snakeLength = 1;
+
+  snakeBody[0] = { FACE_UP, 5, 5 };
+
+  snakeDir = SNAKE_RIGHT;
+  lastSnakeMoveMs = millis();
+
+  // Important: do NOT treat the current cube position as a fresh command right after reset.
+  lastSnakeInputFace = imu.upFace;
+
+  snakeGameOver = false;
+  snakeGrowPending = false;
+  snakeScore = 0;
+
+  for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+    snakeApples[i].active = false;
+  }
+
+  for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
+    spawnSnakeAppleInSlot(i);
+  }
+
+  renderSnakeTest();
+  flushDisplay();
+
+  Serial.println("[SNAKE] reset");
+}
+
 
 
 void setup() {
@@ -1089,9 +1139,7 @@ void setup() {
 
   lastRestart = millis();
 
-for (uint8_t i = 0; i < MAX_SNAKE_APPLES; i++) {
-  spawnSnakeAppleInSlot(i);
-}
+resetSnakeGame();
 }
 
 // Called from BLE RX when frontend says "ROUND START"
