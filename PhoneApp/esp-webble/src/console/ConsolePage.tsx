@@ -51,6 +51,7 @@ export default function ConsolePage() {
   const baseDurationRef = useRef<number>(0);   // set on GAME START
   const successStreakRef = useRef<number>(0);
   const failStreakRef = useRef<number>(0);
+  const requestedGameRef = useRef<"goNoGo" | "snake" | null>(null);
 
   // BLE helpers
   const pushLog = useCallback((line: string) => {
@@ -395,6 +396,23 @@ export default function ConsolePage() {
     baseDurationRef.current = next;
   }
 
+  const writeGameStart = useCallback(
+    async (game: "goNoGo" | "snake") => {
+      const line =
+        game === "snake"
+          ? "GAME START type=SNAKE\n"
+          : "GAME START type=SIMON\n";
+
+      pushLog(
+        `[DBG] requestedGameRef=${requestedGameRef.current ?? "null"} outgoing=${JSON.stringify(
+          line.trimEnd()
+        )}`
+      );
+      await writeLine(line);
+    },
+    [pushLog, writeLine]
+  );
+
   const handleEndRound = useCallback(
     async (from: FaceId) => {
       // Decrease remaining rounds
@@ -462,6 +480,18 @@ export default function ConsolePage() {
         })
       );
 
+      if (params.type === "SNAKE") {
+        requestedGameRef.current = "snake";
+        setRoundPhase(RoundPhase.IDLE);
+        roundPhaseRef.current = RoundPhase.IDLE;
+        pendingRoundRef.current = null;
+        setPendingRound(null);
+
+        await writeGameStart("snake");
+        setCommand("");
+        return;
+      }
+
       const remaining = params.remaining
         ? Number(params.remaining)
         : 1;
@@ -473,6 +503,7 @@ export default function ConsolePage() {
       // Store server-owned state
       remainingRoundsRef.current = remaining;
       roundDurationRef.current = duration;
+      requestedGameRef.current = "goNoGo";
 
       baseDurationRef.current = duration; // duration from GAME START
       successStreakRef.current = 0;
@@ -489,7 +520,7 @@ export default function ConsolePage() {
       );
 
       // Forward simplified command to ESP
-      await writeLine("GAME START type=SIMON\n");
+      await writeGameStart("goNoGo");
 
       setCommand("");
       return;
@@ -586,7 +617,7 @@ export default function ConsolePage() {
     const line = raw.endsWith("\n") ? raw : raw + "\n";
     await writeLine(line);
     setCommand("");
-  }, [command, writeLine, pushLog]);
+  }, [command, writeLine, writeGameStart, pushLog]);
 
   const handleRoundFail = useCallback(
     async (data: EndRoundFailData) => {
@@ -664,6 +695,41 @@ export default function ConsolePage() {
 
     console.log(`[SRV] MANUAL ROUND START ${from} → ${to} (${arrow})`);
   }
+
+  const startGoNoGoSession = useCallback(async () => {
+    const remaining = 10;
+    const duration = 3000;
+
+    remainingRoundsRef.current = remaining;
+    roundDurationRef.current = duration;
+    baseDurationRef.current = duration;
+    successStreakRef.current = 0;
+    failStreakRef.current = 0;
+    requestedGameRef.current = "goNoGo";
+
+    setRoundPhase(RoundPhase.IDLE);
+    roundPhaseRef.current = RoundPhase.IDLE;
+    pendingRoundRef.current = null;
+    setPendingRound(null);
+
+    pushLog(
+      `[SRV] Manual Go/No-Go start requested remaining=${remaining} duration=${duration}`
+    );
+    await writeGameStart("goNoGo");
+  }, [pushLog, writeGameStart]);
+
+  const startSnakeSession = useCallback(async () => {
+    requestedGameRef.current = "snake";
+    setRoundPhase(RoundPhase.IDLE);
+    roundPhaseRef.current = RoundPhase.IDLE;
+    pendingRoundRef.current = null;
+    setPendingRound(null);
+
+    pushLog(
+      "[SRV] Manual Snake start requested; firmware Snake BLE start protocol is incomplete"
+    );
+    await writeGameStart("snake");
+  }, [pushLog, writeGameStart]);
 
   useEffect(() => {
     if (!gatt?.tx) return;
@@ -761,6 +827,13 @@ export default function ConsolePage() {
           }
 
           if (line.startsWith("OK GAME START")) {
+            if (requestedGameRef.current === "snake") {
+              pushLog(
+                "[SRV] Snake start ack received; not starting Simon rounds"
+              );
+              return;
+            }
+
             const parts = line.split(/\s+/);
             const facePart = parts.find((p) =>
               p.toLowerCase().startsWith("face=")
@@ -768,6 +841,7 @@ export default function ConsolePage() {
             if (!facePart) return;
 
             const startFace = facePart.split("=")[1] as FaceId;
+
             const firstRound = chooseNextRound(
               startFace,
               remainingRoundsRef.current
@@ -922,12 +996,36 @@ export default function ConsolePage() {
           onToggleTest={togglePacketTest}
         />
 
+        <div className="card">
+          <h3>Manual game start</h3>
+          <p className="muted">
+            Start protocol-level sessions through the existing BLE writer.
+          </p>
+          <div className="actions subtle">
+            <button
+              className="btn btn-neutral"
+              disabled={!isConnected}
+              onClick={() => void startGoNoGoSession()}
+            >
+              Start Go/No-Go
+            </button>
+            <button
+              className="btn btn-neutral"
+              disabled={!isConnected}
+              onClick={() => void startSnakeSession()}
+            >
+              Start Snake
+            </button>
+          </div>
+        </div>
+
         <ManualCommandCard
           command={command}
           isConnected={isConnected}
           onCommandChange={setCommand}
           onSendCommand={() => void sendCommand()}
         />
+        <p className="muted">DEBUG BUILD: SNAKE COMMAND FIX ACTIVE</p>
       </div>
     </AppFrame>
   );

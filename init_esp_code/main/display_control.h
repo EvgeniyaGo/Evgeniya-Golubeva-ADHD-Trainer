@@ -31,7 +31,7 @@ void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, u
 void deleteShape(FaceId face, ShapeId shape);
 void recolorShape(FaceId face, ShapeId shape, ColorId newColor);
 
-void startCountdown(uint32_t durationMs);
+void startCountdown(uint32_t durationMs, FaceId initialFace);
 void updateCountdown(FaceId activeFace);
 void stopCountdown();
 void setCountdownColor(ColorId color);

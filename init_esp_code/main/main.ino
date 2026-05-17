@@ -14,7 +14,13 @@
 
 #define HOLD_TIME_MS 400
 
-#define SNAKE_TEST_MODE 1
+enum GameMode {
+  MODE_IDLE,
+  MODE_SIMON,
+  MODE_SNAKE
+};
+
+static GameMode gameMode = MODE_IDLE;
 
 enum SnakeDir {
   SNAKE_UP,
@@ -340,6 +346,20 @@ void handleCommand(const String &raw) {
 
   // GAME START
   if (upper.startsWith("GAME START")) {
+    if (upper.indexOf("TYPE=SNAKE") >= 0) {
+      gameMode = MODE_SNAKE;
+      inGame = true;
+      inRound = false;
+      roundBalancing = false;
+      currentTargetFace = FACE_UNKNOWN;
+      resetSnakeGame();
+
+      bleTx.active = true;
+      bleTx.msg = "OK GAME START type=SNAKE\n";
+      return;
+    }
+
+    gameMode = MODE_SIMON;
     inGame = true;
     inRound = false;
     roundBalancing = false;
@@ -458,6 +478,7 @@ void handleCommand(const String &raw) {
 
   // GAME END
   if (upper == "GAME END" || upper == "GAME 0") {
+    gameMode = MODE_IDLE;
     resetGameState();
 
     pendingCountdown.action = CD_STOP;
@@ -469,6 +490,7 @@ void handleCommand(const String &raw) {
   }
 
   if (upper == "GAME 1") {
+    gameMode = MODE_SIMON;
     resetGameState();
     inGame = true;
 
@@ -1154,39 +1176,271 @@ void loop() {
   imu = getImuState();
   uint32_t now = millis();
 
-#if SNAKE_TEST_MODE
-  updateSnakeDirectionFromActiveFace(imu.upFace);
+  if (gameMode == MODE_SNAKE) {
+    updateSnakeDirectionFromActiveFace(imu.upFace);
 
-  if (now - lastSnakeMoveMs >= SNAKE_MOVE_INTERVAL_MS) {
-    lastSnakeMoveMs = now;
+    if (now - lastSnakeMoveMs >= SNAKE_MOVE_INTERVAL_MS) {
+      lastSnakeMoveMs = now;
 
-    if (!snakeGameOver) {
-      moveSnakeHeadOneStep();
-      checkSnakeAppleCollision();    
+      if (!snakeGameOver) {
+        moveSnakeHeadOneStep();
+        checkSnakeAppleCollision();    
+      }
+
+      renderSnakeTest();
+
+      Serial.print("[SNAKE] headFace=");
+      Serial.print(parseFace(snakeBody[0].face));
+      Serial.print(" activeFace=");
+      Serial.print(parseFace(imu.upFace));
+      Serial.print(" x=");
+      Serial.print(snakeBody[0].x);
+      Serial.print(" y=");
+      Serial.print(snakeBody[0].y);
+      Serial.print(" dir=");
+      Serial.print(snakeDirName(snakeDir));
+      Serial.print(" length=");
+      Serial.print(snakeLength);
+      Serial.print(" gameOver=");
+      Serial.println(snakeGameOver ? "YES" : "NO");
+    }
+  }
+
+  if (gameMode == MODE_SIMON) {
+    bool simonHandled = false;
+
+    if (pendingRoundStart.active && imu.upFace != FACE_UNKNOWN) {
+      inRound = true;
+      pauseActive = false;
+      roundBalancing = true;
+
+      hasLeftStartFace = false;
+      roundBalanceStartMs = now;
+      roundStartMs = now;
+
+      pendingCountdown.action = CD_START;
+      pendingCountdown.durationMs = roundCfg.durationMs;
+      pendingRoundStart.active = false;
     }
 
-    renderSnakeTest();
+    if (pauseActive) {
+      if (pauseStartMs == 0 && !pauseWaitingForClear) {
+        if (imu.upFace != FACE_UNKNOWN && isFaceLocked()) {
+          pauseFace = imu.upFace;
+          pauseWaitingForClear = true;
+          countdownOwnerFace = pauseFace;
 
-    Serial.print("[SNAKE] headFace=");
-    Serial.print(parseFace(snakeBody[0].face));
-    Serial.print(" activeFace=");
-    Serial.print(parseFace(imu.upFace));
-    Serial.print(" x=");
-    Serial.print(snakeBody[0].x);
-    Serial.print(" y=");
-    Serial.print(snakeBody[0].y);
-    Serial.print(" dir=");
-    Serial.print(snakeDirName(snakeDir));
-    Serial.print(" length=");
-    Serial.print(snakeLength);
-    Serial.print(" gameOver=");
-    Serial.println(snakeGameOver ? "YES" : "NO");
+          bleTx.active = true;
+          bleTx.msg =
+            String("ROUND BALANCE side=")
+            + parseFace(pauseFace)
+            + "\n";
+        }
+
+        simonHandled = true;
+      } else if (imu.upFace != FACE_UNKNOWN && pauseStartMs > 0 && imu.upFace != pauseFace) {
+        pendingCountdown.action = CD_STOP;
+
+        pauseActive = false;
+        inRound = false;
+        roundBalancing = false;
+        currentTargetFace = FACE_UNKNOWN;
+
+        pendingDisplay.action = DISP_CLEAR_ALL;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("END ROUND result=FAIL face=")
+          + parseFace(imu.upFace)
+          + " reason=PAUSE_MOVE\n";
+
+        simonHandled = true;
+      } else if (pauseFace != FACE_UNKNOWN && pauseStartMs > 0 && now - pauseStartMs >= pauseDurationMs) {
+        pendingCountdown.action = CD_STOP;
+
+        pauseActive = false;
+        inRound = false;
+        roundBalancing = false;
+        currentTargetFace = FACE_UNKNOWN;
+
+        pendingDisplay.action = DISP_CLEAR_ALL;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("END ROUND result=SUCCESS face=")
+          + parseFace(pauseFace)
+          + "\n";
+
+        simonHandled = true;
+      }
+    }
+
+    if (!simonHandled && inRound && roundBalancing) {
+      if (roundBalanceStartMs > 0 && now - roundBalanceStartMs > 30000 && imu.upFace != FACE_UNKNOWN) {
+        pendingCountdown.action = CD_STOP;
+
+        inRound = false;
+        roundBalancing = false;
+        currentTargetFace = FACE_UNKNOWN;
+
+        pendingDisplay.action = DISP_CLEAR_ALL;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("END ROUND result=FAIL face=")
+          + parseFace(imu.upFace)
+          + " reason=NO_LOCK\n";
+      } else if (roundBalancing && isFaceLocked() && imu.upFace != FACE_UNKNOWN) {
+        if (pendingRoundStart.face != FACE_UNKNOWN && pendingRoundStart.face == imu.upFace) {
+          startFace = pendingRoundStart.face;
+        } else {
+          startFace = imu.upFace;
+        }
+
+        roundLockedFace = startFace;
+        roundBalancing = false;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("ROUND BALANCE side=")
+          + parseFace(startFace)
+          + "\n";
+
+        pendingRoundStart.active = false;
+        pendingRoundStart.face = FACE_UNKNOWN;
+      }
+
+      simonHandled = true;
+    }
+
+    if (!simonHandled && inRound && !roundBalancing && currentTargetFace != FACE_UNKNOWN) {
+      if (now - roundStartMs > roundCfg.durationMs) {
+        pendingCountdown.action = CD_STOP;
+
+        inRound = false;
+        currentTargetFace = FACE_UNKNOWN;
+
+        pendingDisplay.action = DISP_CLEAR_ALL;
+
+        bleTx.active = true;
+        bleTx.msg =
+          String("END ROUND result=FAIL face=")
+          + parseFace(startFace)
+          + " reason=TIMEOUT\n";
+
+        simonHandled = true;
+      }
+    }
+
+    if (!simonHandled) {
+      if (!isValidUpFace()) {
+        lastUpFace = FACE_UNKNOWN;
+        upFaceSince = now;
+      } else {
+        if (imu.upFace != lastUpFace) {
+          lastUpFace = imu.upFace;
+          upFaceSince = now;
+        }
+
+        if (currentTargetFace != FACE_UNKNOWN && hasLeftStartFace && imu.upFace != currentTargetFace && (now - upFaceSince) >= HOLD_TIME_MS) {
+          pendingCountdown.action = CD_STOP;
+
+          inRound = false;
+          currentTargetFace = FACE_UNKNOWN;
+
+          pendingDisplay.action = DISP_CLEAR_ALL;
+
+          bleTx.active = true;
+          bleTx.msg =
+            String("END ROUND result=FAIL face=")
+            + parseFace(imu.upFace)
+            + " reason=WRONG_FACE\n";
+        } else if (currentTargetFace != FACE_UNKNOWN && imu.upFace == currentTargetFace && (now - upFaceSince) >= HOLD_TIME_MS && !pauseActive) {
+          pendingCountdown.action = CD_STOP;
+
+          inRound = false;
+          currentTargetFace = FACE_UNKNOWN;
+
+          pendingDisplay.action = DISP_CLEAR_ALL;
+
+          bleTx.active = true;
+          bleTx.msg =
+            String("END ROUND result=SUCCESS face=")
+            + parseFace(imu.upFace)
+            + "\n";
+        }
+      }
+    }
+  }
+
+  if (pendingCountdown.action != CD_NONE) {
+    if (pendingCountdown.action == CD_STOP) {
+      stopCountdown();
+    }
+    if (pendingCountdown.action == CD_START) {
+      startCountdown(pendingCountdown.durationMs, imu.upFace);
+    }
+    pendingCountdown.action = CD_NONE;
+  }
+
+  if (gameMode == MODE_SIMON) {
+    updateCountdown(imu.upFace);
+  }
+
+  if (pendingDisplay.action != DISP_NONE) {
+    switch (pendingDisplay.action) {
+      case DISP_CLEAR_ALL:
+        clearAllFaces();
+        pendingDisplay.action = DISP_NONE;
+        displayClearedThisRound = true;
+        break;
+
+      case DISP_CLEAR_FACE:
+        clearFace(pendingDisplay.face);
+        break;
+
+      case DISP_DRAW_SHAPE:
+        clearFace(pendingDisplay.face);
+        mapToDisplay(
+          pendingDisplay.face,
+          pendingDisplay.shape,
+          pendingDisplay.color,
+          DISPLAY_STATIC);
+        break;
+
+      case DISP_DRAW_ARROW:
+        {
+          ShapeId arrow;
+          if (arrowFromTo(pendingDisplay.from, pendingDisplay.to, arrow)) {
+            clearAllFaces();
+            mapToDisplay(
+              pendingDisplay.from,
+              arrow,
+              COLOR_BLUE,
+              DISPLAY_STATIC);
+            mapToDisplay(
+              pendingDisplay.to,
+              SHAPE_CIRCLE_6X6,
+              COLOR_GREEN,
+              DISPLAY_STATIC);
+          }
+          break;
+        }
+
+      default:
+        break;
+    }
+
+    pendingDisplay.action = DISP_NONE;
+  }
+
+  if (bleTx.active) {
+    nusSend(bleTx.msg.c_str());
+    bleTx.active = false;
   }
 
   flushDisplay();
   delay(20);
-  return;
-#endif
 }
 /*
   // DEBUG

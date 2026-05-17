@@ -237,7 +237,7 @@ body{
   display: flex; flex-direction: column;
   gap: 20px;
 }
-.stack.center{ align-items: center; text-align: center; justify-content: center; height: 100%; }
+.stack.center{ align-items: center; text-align: center; height: 100%; }
 
 .status{ font-size: clamp(18px, 2vw, 22px); font-weight: 700; }
 
