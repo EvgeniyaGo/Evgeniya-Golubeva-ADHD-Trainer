@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../auth/useAuth";
 import { AuthModal } from "../auth/AuthModal";
 import { AccountIcon } from "../navIcons";
 
@@ -13,7 +15,25 @@ export function BoardHeader({
   rightContent,
   onToggleMenu,
 }: BoardHeaderProps) {
+  const navigate = useNavigate();
+  const { firebaseUser, loading, logout } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
+  const isLoggedIn = Boolean(firebaseUser);
+
+  const handleAccountClick = () => {
+    if (loading) return;
+
+    if (isLoggedIn) {
+      navigate("/account");
+      return;
+    }
+
+    setAuthOpen(true);
+  };
+
+  const handleLogout = () => {
+    void logout();
+  };
 
   return (
     <>
@@ -41,15 +61,31 @@ export function BoardHeader({
           <button
             className="menu-toggle top-icon"
             type="button"
-            aria-label="Open account"
-            title="Account"
-            onClick={() => setAuthOpen(true)}
+            aria-label={isLoggedIn ? "Go to account" : "Open account"}
+            title={loading ? "Loading account" : "Account"}
+            disabled={loading}
+            onClick={handleAccountClick}
           >
-            <AccountIcon label="Account" />
+            {loading ? (
+              <span className="account-loading">Loading...</span>
+            ) : (
+              <AccountIcon label="Account" />
+            )}
           </button>
+          {isLoggedIn && !loading && (
+            <button
+              className="account-logout"
+              type="button"
+              onClick={handleLogout}
+            >
+              Log out
+            </button>
+          )}
         </div>
       </header>
-      {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
+      {authOpen && !isLoggedIn && (
+        <AuthModal onClose={() => setAuthOpen(false)} />
+      )}
     </>
   );
 }

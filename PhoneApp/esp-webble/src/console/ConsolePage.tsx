@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useBle } from "../ble/useBle";
 import { AppFrame } from "../components/layout/AppFrame";
-import { TopBarConnectionStatus } from "../components/TopBarConnectionStatus";
 import { LogCard } from "./components/LogCard";
 import { ManualCommandCard } from "./components/ManualCommandCard";
 import { PacketTestCard } from "./components/PacketTestCard";
@@ -9,27 +9,20 @@ import {
   MAX_ROUND_MS,
   MIN_PAUSE_MS,
   MIN_ROUND_MS,
-  NUS_RX,
-  NUS_SERVICE,
-  NUS_TX,
 } from "./protocol/constants";
 import { arrowFromTo } from "./protocol/faces";
 import { parseEndRound } from "./protocol/parsing";
 import { roundStartLine } from "./protocol/rounds";
 import {
   RoundPhase,
-  type ConnectionStatus,
   type EndRoundFailData,
   type FaceId,
-  type GattStuff,
   type PendingRound,
   type ShapeId,
 } from "./protocol/types";
 
 export default function ConsolePage() {
-  // Connection state
-  const [status, setStatus] = useState<ConnectionStatus>("idle");
-  const [name, setName] = useState<string>("");
+  const { gatt, status, deviceName } = useBle();
   const [log, setLog] = useState<string[]>([]);
 
 
@@ -49,7 +42,6 @@ export default function ConsolePage() {
   const [, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
 
   // Runtime refs
-  const gattRef = useRef<GattStuff | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
   const remainingRoundsRef = useRef<number>(0);
@@ -72,14 +64,7 @@ export default function ConsolePage() {
     });
   }, []);
 
-  const onDisconnected = useCallback(() => {
-    setStatus("disconnected");
-    setTestRunning(false);
-    pendingRef.current.clear();
-    pushLog("[BLE] Disconnected");
-    gattRef.current = null;
-  }, [pushLog]);
-
+  /*
   const connect = useCallback(async () => {
     try {
       if (!navigator.bluetooth) {
@@ -278,12 +263,12 @@ export default function ConsolePage() {
       pushLog(`[ERR] ${e?.message || e}`);
     }
   }, [pushLog]);
+  */
 
   // Write helper (handles writeWith/WithoutResponse differences)
   // Returns true if the write actually happened, false on failure / busy
   const writeLine = useCallback((line: string): Promise<void> => {
-    const g = gattRef.current;
-    if (!g) {
+    if (!gatt) {
       pushLog("Write failed: not connected");
       return Promise.resolve();
     }
@@ -292,7 +277,7 @@ export default function ConsolePage() {
 
     writeQueueRef.current = writeQueueRef.current.then(async () => {
       try {
-        const rx: any = g.rx;
+        const rx: any = gatt.rx;
 
         if (typeof rx.writeValueWithoutResponse === "function") {
           await rx.writeValueWithoutResponse(data);
@@ -309,7 +294,7 @@ export default function ConsolePage() {
     });
 
     return writeQueueRef.current;
-  }, [pushLog]);
+  }, [gatt, pushLog]);
 
   // Round/game helpers
   const adjacency: Record<FaceId, FaceId[]> = {
@@ -680,6 +665,175 @@ export default function ConsolePage() {
     console.log(`[SRV] MANUAL ROUND START ${from} → ${to} (${arrow})`);
   }
 
+  useEffect(() => {
+    if (!gatt?.tx) return;
+
+    const tx = gatt.tx;
+
+    const handleNotification = async (ev: Event) => {
+      const dv = (ev.target as BluetoothRemoteGATTCharacteristic).value!;
+
+      try {
+        const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+        const text = new TextDecoder().decode(bytes).trimEnd();
+        pushLog(`[ESP] ${text}`);
+
+        for (const line of text.split(/\r?\n/)) {
+          if (!line) continue;
+
+          if (line.startsWith("ROUND BALANCE")) {
+            const round = pendingRoundRef.current;
+
+            if (!round) {
+              console.warn("[SRV] BALANCE but no pending round");
+              continue;
+            }
+
+            setRoundPhase(RoundPhase.PLAYING);
+            roundPhaseRef.current = RoundPhase.PLAYING;
+
+            const parts = line.split(/\s+/);
+            const sidePart = parts.find((p) =>
+              p.toLowerCase().startsWith("side=")
+            );
+            if (!sidePart) continue;
+
+            const balancedFace = sidePart.split("=")[1] as FaceId;
+
+            await writeLine("CLEAR ALL\n");
+
+            if (round.type === "ARROW") {
+              const intended = pendingRoundRef.current;
+              const isOpposite =
+                intended?.type === "ARROW" && intended.mode === "OPPOSITE";
+
+              await writeLine(
+                `DRAW SHAPE ${balancedFace} ${round.arrow} COLOR_BLUE\n`
+              );
+              await writeLine(
+                `DRAW SHAPE ${round.to} SHAPE_CIRCLE_6X6 COLOR_GREEN\n`
+              );
+              await writeLine(
+                isOpposite
+                  ? "BEEP freq=1000 dur=400\n"
+                  : "BEEP freq=1200 dur=200\n"
+              );
+            } else {
+              console.log(
+                `[SRV] PAUSE round active on ${balancedFace} for ${round.duration}ms`
+              );
+            }
+
+            continue;
+          }
+
+          if (line.startsWith("END ROUND")) {
+            const data = parseEndRound(line);
+
+            if (!data) {
+              console.warn("[SRV] Bad END ROUND format");
+              continue;
+            }
+
+            if (
+              roundPhaseRef.current !== RoundPhase.PLAYING &&
+              roundPhaseRef.current !== RoundPhase.WAIT_BALANCE
+            ) {
+              console.warn("[SRV] Ignoring END ROUND (not playing yet)");
+              continue;
+            }
+
+            if (data.result === "SUCCESS") {
+              console.log(
+                `[SRV] ROUND SUCCESS face=${data.face} time=${data.time}`
+              );
+              updateAdaptiveDuration("SUCCESS");
+              await handleEndRound(data.face);
+            } else {
+              console.log(
+                `[SRV] ROUND FAIL face=${data.face} reason=${data.reason}`
+              );
+              updateAdaptiveDuration("FAIL");
+              await handleRoundFail(data);
+            }
+
+            continue;
+          }
+
+          if (line.startsWith("OK GAME START")) {
+            const parts = line.split(/\s+/);
+            const facePart = parts.find((p) =>
+              p.toLowerCase().startsWith("face=")
+            );
+            if (!facePart) return;
+
+            const startFace = facePart.split("=")[1] as FaceId;
+            const firstRound = chooseNextRound(
+              startFace,
+              remainingRoundsRef.current
+            );
+
+            pendingRoundRef.current = firstRound;
+            setPendingRound(firstRound);
+            roundPhaseRef.current = RoundPhase.WAIT_BALANCE;
+            setRoundPhase(RoundPhase.WAIT_BALANCE);
+
+            await writeLine(roundStartLine(firstRound));
+            return;
+          }
+
+          if (line.startsWith("PONG ")) {
+            const seq = Number(line.substring(5).trim());
+
+            if (!Number.isNaN(seq)) {
+              const sentAt = pendingRef.current.get(seq);
+
+              if (sentAt != null) {
+                const rtt = performance.now() - sentAt;
+                pendingRef.current.delete(seq);
+
+                setRecvCount((prevRecv) => {
+                  const nextRecv = prevRecv + 1;
+                  setAvgRttMs((prevAvg) =>
+                    prevAvg == null
+                      ? rtt
+                      : prevAvg + (rtt - prevAvg) / nextRecv
+                  );
+                  return nextRecv;
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        const hex = Array.from(
+          new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)
+        )
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ");
+        pushLog(`[ESP] [${hex}]`);
+      }
+    };
+
+    void tx.startNotifications().then(() => {
+      tx.addEventListener("characteristicvaluechanged", handleNotification);
+    });
+
+    pushLog(`[BLE] Connected to ${deviceName || "(no name)"}`);
+
+    return () => {
+      tx.removeEventListener("characteristicvaluechanged", handleNotification);
+      void tx.stopNotifications().catch(() => undefined);
+    };
+  }, [
+    deviceName,
+    gatt?.tx,
+    handleEndRound,
+    handleRoundFail,
+    pushLog,
+    writeLine,
+  ]);
+
   // Packet test effects
   useEffect(() => {
     if (!testRunning || status !== "connected") return;
@@ -708,21 +862,6 @@ export default function ConsolePage() {
 
     return () => window.clearInterval(id);
   }, [testRunning, status, writeLine]);
-
-  // BLE cleanup effect
-  useEffect(
-    () => () => {
-      try {
-        gattRef.current?.device.removeEventListener(
-          "gattserverdisconnected",
-          onDisconnected
-        );
-      } catch {
-        // ignore
-      }
-    },
-    [onDisconnected]
-  );
 
   // Derived UI values
   const isConnected = status === "connected";
@@ -761,27 +900,13 @@ export default function ConsolePage() {
     setTestRunning((r) => !r);
   }, [testRunning]);
 
-  const handleConnectionToggle = () => {
-    isConnected ? void disconnect() : void connect();
-  };
-
   // JSX return
   return (
-    <AppFrame
-      ariaLabel="Console"
-      topBarRight={
-        <TopBarConnectionStatus
-          isConnected={isConnected}
-          statusText={statusText}
-          name={name}
-          onToggleConnection={handleConnectionToggle}
-        />
-      }
-    >
+    <AppFrame ariaLabel="Console">
       <div className="stack center">
         <div className="status">
           {statusText}
-          {name && isConnected ? ` - ${name}` : ""}
+          {deviceName && isConnected ? ` - ${deviceName}` : ""}
         </div>
 
         <LogCard log={log} logBoxRef={logBoxRef} />

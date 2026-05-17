@@ -1,21 +1,12 @@
 import { AppFrame } from "../components/layout/AppFrame";
 import { CubePreview } from "../components/CubePreview";
 import { GameModeCard } from "../components/GameModeCard";
-import { StatusChip } from "../components/StatusChip";
-import { TopBarConnectionStatus } from "../components/TopBarConnectionStatus";
 
 export default function MainPage() {
   return (
     <AppFrame
       ariaLabel="Main"
       activePage="home"
-      topBarRight={
-        <TopBarConnectionStatus
-          isConnected={false}
-          statusText="NOT CONNECTED"
-          onToggleConnection={() => undefined}
-        />
-      }
     >
       <div className="main-home">
         <section className="main-hero" aria-labelledby="main-page-title">
@@ -24,13 +15,6 @@ export default function MainPage() {
           </div>
 
           <div className="main-hero-copy">
-            <div className="main-connection">
-              <StatusChip label="NOT CONNECTED" />
-              <button className="main-disconnect" type="button">
-                Connect
-              </button>
-            </div>
-
             <h1 id="main-page-title" className="main-title">
               Choose a training mode
             </h1>
@@ -49,12 +33,14 @@ export default function MainPage() {
               subtitle="Train impulse control and response inhibition"
               label="Focus + self-control"
               icon="play"
+              to="/games/go-no-go"
             />
             <GameModeCard
-              title="N-Back"
-              subtitle="Train working memory and attention stability"
-              label="Memory + attention"
-              icon="n"
+              title="3D Snake"
+              subtitle="Train spatial planning and sustained attention"
+              label="Planning + movement"
+              icon="snake"
+              to="/games/snake"
             />
           </div>
         </section>

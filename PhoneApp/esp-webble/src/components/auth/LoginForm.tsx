@@ -1,16 +1,51 @@
 import { useState, type FormEvent } from "react";
+import { useAuth } from "../../auth/useAuth";
 
 type LoginFormProps = {
+  onSuccess: () => void;
   onSwitchToSignup: () => void;
 };
 
-export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
+function authErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    if (error.message.includes("auth/invalid-credential")) {
+      return "Email or password is incorrect.";
+    }
+
+    if (error.message.includes("auth/invalid-email")) {
+      return "Enter a valid email address.";
+    }
+
+    if (error.message.includes("auth/too-many-requests")) {
+      return "Too many attempts. Try again later.";
+    }
+  }
+
+  return "Could not log in. Please try again.";
+}
+
+export function LoginForm({ onSuccess, onSwitchToSignup }: LoginFormProps) {
+  const { login } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage("Login will be connected later.");
-    console.log("Login placeholder submitted");
+    setMessage("");
+    setSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email") ?? "").trim();
+    const password = String(formData.get("password") ?? "");
+
+    try {
+      await login(email, password);
+      onSuccess();
+    } catch (error) {
+      setMessage(authErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -22,16 +57,21 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
 
       <label className="auth-field">
         <span>Email</span>
-        <input type="email" name="email" autoComplete="email" />
+        <input type="email" name="email" autoComplete="email" required />
       </label>
 
       <label className="auth-field">
         <span>Password</span>
-        <input type="password" name="password" autoComplete="current-password" />
+        <input
+          type="password"
+          name="password"
+          autoComplete="current-password"
+          required
+        />
       </label>
 
-      <button className="auth-primary" type="submit">
-        Log in
+      <button className="auth-primary" type="submit" disabled={submitting}>
+        {submitting ? "Logging in..." : "Log in"}
       </button>
 
       {message && <p className="auth-message">{message}</p>}

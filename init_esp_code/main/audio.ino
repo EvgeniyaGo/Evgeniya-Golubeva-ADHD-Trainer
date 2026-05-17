@@ -121,3 +121,4 @@ bool parseKeyValueInt(const String &cmd, const char *key, uint16_t &out) {
   out = cmd.substring(idx, end).toInt();
   return true;
 }
+

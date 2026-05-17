@@ -11,11 +11,13 @@ export function TopBarConnectionStatus({
   name = "",
   onToggleConnection,
 }: TopBarConnectionStatusProps) {
+  const isInteractive = Boolean(onToggleConnection);
+
   return (
     <div
-      className="status-chip"
-      role="button"
-      tabIndex={0}
+      className={`status-chip${isInteractive ? " is-interactive" : ""}`}
+      role={isInteractive ? "button" : "status"}
+      tabIndex={isInteractive ? 0 : undefined}
       onClick={onToggleConnection}
       onKeyDown={(e) => {
         if ((e.key === "Enter" || e.key === " ") && onToggleConnection) {
@@ -23,7 +25,7 @@ export function TopBarConnectionStatus({
           onToggleConnection();
         }
       }}
-      title={isConnected ? "Disconnect" : "Connect"}
+      title={isInteractive ? (isConnected ? "Disconnect" : "Connect") : undefined}
     >
       <span className={`dot ${isConnected ? "on" : ""}`} />
       <span className="status-text">
