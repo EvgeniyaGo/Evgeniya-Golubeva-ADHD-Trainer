@@ -25,12 +25,13 @@
 void initDisplay();
 
 void clearFace(FaceId face);
+void clearAllFacesNoShow();
 void clearAllFaces();
 void mapToDisplay(FaceId face, ShapeId shape, ColorId color, DisplayMode mode, uint32_t timeout = 0); // Add/update a shape layer on a face. -timeout is used only for MODE_TIMED (ms). For other modes you can pass 0.
 void deleteShape(FaceId face, ShapeId shape);
 void recolorShape(FaceId face, ShapeId shape, ColorId newColor);
 
-void startCountdown(uint32_t durationMs);
+void startCountdown(uint32_t durationMs, FaceId initialFace);
 void updateCountdown(FaceId activeFace);
 void stopCountdown();
 void setCountdownColor(ColorId color);
@@ -40,5 +41,7 @@ ColorShades getColorShades(ColorId color);
 
 void setFaceRotation(FaceId face, int8_t rotationSteps);
 void renderFace(FaceId face);
+
+void drawPixelOnFace(FaceId face, uint8_t x, uint8_t y, ColorId color, bool clearBefore = true);
 
 #endif

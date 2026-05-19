@@ -213,6 +213,17 @@ void recolorShape(FaceId face, ShapeId shape, ColorId newColor) {
   renderFace(face);
 }
 
+void clearAllFacesNoShow() {
+  for (uint8_t face = 0; face < FACE_COUNT; face++) {
+    for (uint8_t i = 0; i < MAX_LAYERS_PER_FACE; i++) {
+      faceLayers[face][i].active = false;
+    }
+
+    faceStrips[face]->clear();
+    staticShape[face].active = false;
+  }
+}
+
 // Render shape layer to buffer
 void renderShapeLayer(uint32_t* buffer, const ShapeLayer& layer, int8_t rotation, FaceId face) {
   const char* shapeDef = getShapeDefinition(layer.shapeId);
@@ -416,4 +427,27 @@ void setCountdownColor(ColorId color) {
 
 bool isCountdownActive() {
   return countdownActive;
+}
+
+void drawPixelOnFace(FaceId face, uint8_t x, uint8_t y, ColorId color, bool clearBefore) {
+  if (face >= FACE_COUNT) return;
+  if (x >= MATRIX_WIDTH || y >= MATRIX_HEIGHT) return;
+  if (color >= COLOR_COUNT) return;
+
+  Adafruit_NeoPixel* strip = faceStrips[face];
+
+  if (clearBefore) {
+    strip->clear();
+  }
+
+  uint8_t rx = x;
+  uint8_t ry = y;
+
+  rotatePixel(rx, ry, faceRotations[face]);
+
+  uint16_t idx = coordToIndex(rx, ry, face);
+  if (idx == 0xFFFF) return;
+
+  ColorShades shades = getColorShades(color);
+  strip->setPixelColor(idx, shades.x);
 }
