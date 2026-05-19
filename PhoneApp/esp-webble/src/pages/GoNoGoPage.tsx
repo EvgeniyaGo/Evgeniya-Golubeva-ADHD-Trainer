@@ -1,5 +1,8 @@
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useBle } from "../ble/useBle";
 import { AppFrame } from "../components/layout/AppFrame";
+import { useGameSession } from "../gameSession/useGameSession";
 
 const rules = [
   "React only to target signals",
@@ -18,6 +21,40 @@ const metrics = [
 ];
 
 export default function GoNoGoPage() {
+  const navigate = useNavigate();
+  const { isConnected } = useBle();
+  const {
+    activeGame,
+    latestSessionResult,
+    lastCompletedGame,
+    sessionError,
+    startGoNoGoSession,
+  } = useGameSession();
+  const [waitingForResult, setWaitingForResult] = useState(false);
+
+  useEffect(() => {
+    if (
+      waitingForResult &&
+      lastCompletedGame === "goNoGo" &&
+      latestSessionResult?.type === "SIMON"
+    ) {
+      navigate("/games/go-no-go/results");
+    }
+  }, [lastCompletedGame, latestSessionResult, navigate, waitingForResult]);
+
+  useEffect(() => {
+    if (sessionError) {
+      setWaitingForResult(false);
+    }
+  }, [sessionError]);
+
+  const handleStart = async () => {
+    setWaitingForResult(true);
+    await startGoNoGoSession();
+  };
+
+  const isRunning = activeGame === "goNoGo";
+
   return (
     <AppFrame ariaLabel="Go/No-Go setup" activePage="home">
       <div className="game-setup-page">
@@ -31,10 +68,19 @@ export default function GoNoGoPage() {
               Train impulse control, attention, and response inhibition.
             </p>
           </div>
-          <Link className="game-start-button result-link" to="/games/go-no-go/results">
-            Start session
-          </Link>
+          <button
+            className="game-start-button result-link"
+            disabled={!isConnected || isRunning}
+            type="button"
+            onClick={() => void handleStart()}
+          >
+            {isRunning ? "Waiting for results" : "Start session"}
+          </button>
         </section>
+        {!isConnected && (
+          <p className="copy-message">Connect to the cube before starting.</p>
+        )}
+        {sessionError && <p className="copy-message">{sessionError}</p>}
 
         <div className="game-setup-grid">
           <section className="account-card" aria-label="Rules">

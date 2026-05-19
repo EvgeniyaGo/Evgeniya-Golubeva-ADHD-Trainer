@@ -2,70 +2,132 @@ import { Link } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { AppFrame } from "../components/layout/AppFrame";
-import { createMockSession } from "../services/sessionService";
+import { useGameSession } from "../gameSession/useGameSession";
+import {
+  createMockSession,
+  createSession,
+  createSessionDataFromResult,
+} from "../services/sessionService";
+import type { SnakeSessionResult } from "../console/protocol/types";
 
-const deathType = "wallCollision";
+const mockResult: SnakeSessionResult = {
+  type: "SNAKE",
+  durationMs: 132000,
+  speedMs: 400,
+  finalScore: 24,
+  apples: 18,
+  avgAppleMs: 7300,
+  deathType: "wallCollision",
+};
 
-const metrics = [
-  {
-    label: "Survival Time",
-    value: "2 min 12 sec",
-    detail: "How long the player stayed active.",
-  },
-  {
-    label: "Final Score",
-    value: "24",
-    detail: "Score reached before the session ended.",
-  },
-  {
-    label: "Apples Collected",
-    value: "18",
-    detail: "Targets collected during the session.",
-  },
-  {
-    label: "Average Time Between Apples",
-    value: "7.3 sec",
-    detail: "Average time needed to collect each apple.",
-  },
-  {
-    label: "Death Type",
-    value: deathType,
-    detail: "How the session ended.",
-  },
-];
+function formatDuration(ms: number) {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) return `${seconds} sec`;
+  if (seconds === 0) return `${minutes} min`;
+  return `${minutes} min ${seconds} sec`;
+}
+
+function formatDateTime(date: Date | null) {
+  if (!date) return "Mock fallback";
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function buildMetrics(result: SnakeSessionResult) {
+  return [
+    {
+      label: "Survival Time",
+      value: formatDuration(result.durationMs),
+      detail: "How long the player stayed active.",
+    },
+    {
+      label: "Speed",
+      value: `${result.speedMs} ms`,
+      detail: "Movement interval configured by the cube.",
+    },
+    {
+      label: "Final Score",
+      value: String(result.finalScore),
+      detail: "Score reached before the session ended.",
+    },
+    {
+      label: "Apples Collected",
+      value: String(result.apples),
+      detail: "Targets collected during the session.",
+    },
+    {
+      label: "Average Time Between Apples",
+      value: `${(result.avgAppleMs / 1000).toFixed(1)} sec`,
+      detail: "Average time needed to collect each apple.",
+    },
+    {
+      label: "Death Type",
+      value: result.deathType,
+      detail: "How the session ended.",
+    },
+  ];
+}
 
 function deathTypeText(type: string) {
   if (type === "wallCollision") {
-    return "Wall collisions may reflect rushed movement or reduced spatial planning.";
+    return "Wall collision may reflect rushed movement or reduced spatial planning.";
   }
 
   if (type === "selfCollision") {
-    return "Self-collisions may reflect difficulty tracking recent movement patterns.";
+    return "Self collision may reflect difficulty tracking recent movement patterns.";
   }
 
   if (type === "deadZoneCollision") {
-    return "Dead-zone collisions may reflect attention lapses during higher-load moments.";
+    return "Dead-zone collision may reflect attention lapses during higher-load moments.";
   }
 
   if (type === "timeout") {
-    return "The session ended by time limit.";
+    return "Session ended by time limit.";
   }
 
-  return "The session was stopped manually, so interpretation may be limited.";
+  return "Manual stop interpretation may be limited.";
 }
 
 export default function SnakeResultsPage() {
   const { firebaseUser } = useAuth();
+  const { latestSessionResult, latestSessionReceivedAt } = useGameSession();
   const [saveMessage, setSaveMessage] = useState("");
+  const realResult =
+    latestSessionResult?.type === "SNAKE" ? latestSessionResult : null;
+  const realReceivedAt = realResult ? latestSessionReceivedAt : null;
+  const result = realResult ?? mockResult;
+  const metrics = buildMetrics(result);
 
-  const handleSaveMockSession = async () => {
+  const handleSaveSession = async () => {
     if (!firebaseUser) {
-      setSaveMessage("Log in to save a mock session.");
+      setSaveMessage("Log in to save this session.");
       return;
     }
 
-    await createMockSession(firebaseUser.uid, "snake");
-    setSaveMessage("Mock Snake session saved.");
+    try {
+      if (realResult && realReceivedAt) {
+        await createSession(
+          firebaseUser.uid,
+          createSessionDataFromResult(realResult, realReceivedAt)
+        );
+        setSaveMessage("Snake session saved.");
+        return;
+      }
+
+      await createMockSession(firebaseUser.uid, "snake");
+      setSaveMessage("Mock Snake session saved.");
+    } catch {
+      setSaveMessage("Could not save session. Try again.");
+    }
   };
 
   return (
@@ -79,7 +141,7 @@ export default function SnakeResultsPage() {
             </h1>
             <p className="game-setup-purpose">
               Review movement control, planning, and sustained attention from
-              this mock session.
+              this {realResult ? "cube" : "mock"} session.
             </p>
           </div>
         </section>
@@ -91,15 +153,15 @@ export default function SnakeResultsPage() {
           <div className="selected-session-card">
             <div>
               <span>Survival time</span>
-              <strong>2 min 12 sec</strong>
+              <strong>{formatDuration(result.durationMs)}</strong>
             </div>
             <div>
               <span>Speed</span>
-              <strong>Normal</strong>
+              <strong>{result.speedMs} ms</strong>
             </div>
             <div>
               <span>Date/time</span>
-              <strong>Today, placeholder</strong>
+              <strong>{formatDateTime(realReceivedAt)}</strong>
             </div>
           </div>
         </section>
@@ -128,16 +190,18 @@ export default function SnakeResultsPage() {
           <div className="account-section-head compact-head">
             <h2>Death type interpretation</h2>
           </div>
-          <p className="result-interpretation">{deathTypeText(deathType)}</p>
+          <p className="result-interpretation">
+            {deathTypeText(result.deathType)}
+          </p>
         </section>
 
         <div className="result-actions">
           <button
             className="export-button"
             type="button"
-            onClick={() => void handleSaveMockSession()}
+            onClick={() => void handleSaveSession()}
           >
-            Save mock session
+            {realResult ? "Save session" : "Save mock session"}
           </button>
           <Link className="export-button result-link" to="/games/snake">
             Back to game setup

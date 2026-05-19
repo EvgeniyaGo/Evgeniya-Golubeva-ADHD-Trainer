@@ -5,6 +5,8 @@
 #include <BLEServer.h>
 #include <BLE2902.h>
 #include <Wire.h>
+#include <math.h>
+#include <string.h>
 #include "types.h"
 #include "display_control.h"
 #include "imu_control.h"
@@ -73,6 +75,27 @@ ImuState imu;
 // Hold-time detection
 static FaceId lastUpFace = FACE_UNKNOWN;
 static uint32_t upFaceSince = 0;
+
+// Session metrics
+static uint32_t simonSessionStartMs = 0;
+static uint16_t simonTotalRounds = 0;
+static uint16_t simonSuccessRounds = 0;
+static uint16_t simonFailedRounds = 0;
+static uint16_t simonOmissionErrors = 0;
+static uint16_t simonCommissionErrors = 0;
+static uint16_t simonCurrentFocusStreak = 0;
+static uint16_t simonLongestFocusStreak = 0;
+static uint32_t simonRoundReactionStartMs = 0;
+static uint32_t simonReactionSumMs = 0;
+static uint64_t simonReactionSumSqMs = 0;
+static uint16_t simonReactionCount = 0;
+static bool simonSessionEnded = true;
+
+static uint32_t snakeSessionStartMs = 0;
+static uint32_t snakeLastAppleMs = 0;
+static uint32_t snakeAppleIntervalSumMs = 0;
+static uint16_t snakeApplesCollected = 0;
+static bool snakeSessionEnded = true;
 
 // PAUSE round state
 static bool pauseActive = false;
@@ -320,6 +343,122 @@ static void resetGameState() {
   clearAllFaces();
 }
 
+static void resetSimonSessionStats() {
+  simonSessionStartMs = millis();
+  simonTotalRounds = 0;
+  simonSuccessRounds = 0;
+  simonFailedRounds = 0;
+  simonOmissionErrors = 0;
+  simonCommissionErrors = 0;
+  simonCurrentFocusStreak = 0;
+  simonLongestFocusStreak = 0;
+  simonRoundReactionStartMs = 0;
+  simonReactionSumMs = 0;
+  simonReactionSumSqMs = 0;
+  simonReactionCount = 0;
+  simonSessionEnded = false;
+}
+
+static void resetSnakeSessionStats() {
+  snakeSessionStartMs = millis();
+  snakeLastAppleMs = snakeSessionStartMs;
+  snakeAppleIntervalSumMs = 0;
+  snakeApplesCollected = 0;
+  snakeSessionEnded = false;
+}
+
+static void recordSimonRoundEnd(bool success, const char *reason) {
+  simonTotalRounds++;
+
+  if (success) {
+    simonSuccessRounds++;
+    simonCurrentFocusStreak++;
+    if (simonCurrentFocusStreak > simonLongestFocusStreak) {
+      simonLongestFocusStreak = simonCurrentFocusStreak;
+    }
+    return;
+  }
+
+  simonFailedRounds++;
+  simonCurrentFocusStreak = 0;
+
+  if (strcmp(reason, "TIMEOUT") == 0 || strcmp(reason, "NO_LOCK") == 0) {
+    simonOmissionErrors++;
+  } else if (strcmp(reason, "WRONG_FACE") == 0 || strcmp(reason, "PAUSE_MOVE") == 0) {
+    simonCommissionErrors++;
+  }
+}
+
+static void recordSimonReaction(uint32_t acceptedAtMs) {
+  if (simonRoundReactionStartMs == 0 || acceptedAtMs < simonRoundReactionStartMs) return;
+
+  uint32_t reactionMs = acceptedAtMs - simonRoundReactionStartMs;
+  simonReactionSumMs += reactionMs;
+  simonReactionSumSqMs += (uint64_t)reactionMs * reactionMs;
+  simonReactionCount++;
+  simonRoundReactionStartMs = 0;
+}
+
+static void sendSimonSessionEnd() {
+  if (simonSessionEnded) return;
+
+  simonSessionEnded = true;
+
+  uint32_t durationMs = millis() - simonSessionStartMs;
+  uint16_t accuracyPct =
+    simonTotalRounds == 0 ? 0 : (uint16_t)((simonSuccessRounds * 100UL) / simonTotalRounds);
+  uint32_t meanReactionMs = 0;
+  uint32_t reactionStdMs = 0;
+
+  if (simonReactionCount > 0) {
+    double mean = (double)simonReactionSumMs / simonReactionCount;
+    double meanSq = (double)simonReactionSumSqMs / simonReactionCount;
+    double variance = meanSq - (mean * mean);
+    if (variance < 0) variance = 0;
+
+    meanReactionMs = (uint32_t)(mean + 0.5);
+    reactionStdMs = (uint32_t)(sqrt(variance) + 0.5);
+  }
+
+  // TODO: difficulty needs a true app/firmware setting.
+  String msg =
+    String("SESSION END type=SIMON durationMs=") + durationMs
+    + " difficulty=0"
+    + " omissionErrors=" + simonOmissionErrors
+    + " commissionErrors=" + simonCommissionErrors
+    + " meanReactionMs=" + meanReactionMs
+    + " reactionStdMs=" + reactionStdMs
+    + " accuracyPct=" + accuracyPct
+    + " longestFocusStreak=" + simonLongestFocusStreak
+    + " rounds=" + simonTotalRounds
+    + "\n";
+
+  nusSend(msg);
+}
+
+static void sendSnakeSessionEnd(const char *deathType) {
+  if (snakeSessionEnded) return;
+
+  snakeSessionEnded = true;
+  gameMode = MODE_IDLE;
+
+  uint32_t durationMs = millis() - snakeSessionStartMs;
+  uint32_t avgAppleMs =
+    snakeApplesCollected <= 1 ? 0 : snakeAppleIntervalSumMs / (snakeApplesCollected - 1);
+
+  String msg =
+    String("SESSION END type=SNAKE durationMs=") + durationMs
+    + " speedMs=" + SNAKE_MOVE_INTERVAL_MS
+    + " finalScore=" + snakeScore
+    + " apples=" + snakeApplesCollected
+    + " avgAppleMs=" + avgAppleMs
+    + " deathType=" + deathType
+    + "\n";
+
+  nusSend(msg);
+  clearAllFaces();
+}
+
 static String kvGet(const String &upperLine, const String &key) {
   // ищем "KEY=" в строке
   String pat = key + "=";
@@ -353,6 +492,7 @@ void handleCommand(const String &raw) {
       roundBalancing = false;
       currentTargetFace = FACE_UNKNOWN;
       resetSnakeGame();
+      resetSnakeSessionStats();
 
       bleTx.active = true;
       bleTx.msg = "OK GAME START type=SNAKE\n";
@@ -364,6 +504,7 @@ void handleCommand(const String &raw) {
     inRound = false;
     roundBalancing = false;
     currentTargetFace = FACE_UNKNOWN;
+    resetSimonSessionStats();
 
     bleTx.active = true;
     bleTx.msg =
@@ -441,6 +582,7 @@ void handleCommand(const String &raw) {
       roundBalancing = true;
       pauseActive = false;
       roundBalanceStartMs = millis();
+      simonRoundReactionStartMs = 0;
 
       pendingRoundStart.active = true;
       pendingRoundStart.face = FACE_UNKNOWN;
@@ -478,6 +620,12 @@ void handleCommand(const String &raw) {
 
   // GAME END
   if (upper == "GAME END" || upper == "GAME 0") {
+    if (gameMode == MODE_SIMON) {
+      sendSimonSessionEnd();
+    } else if (gameMode == MODE_SNAKE) {
+      sendSnakeSessionEnd("manualStop");
+    }
+
     gameMode = MODE_IDLE;
     resetGameState();
 
@@ -493,6 +641,7 @@ void handleCommand(const String &raw) {
     gameMode = MODE_SIMON;
     resetGameState();
     inGame = true;
+    resetSimonSessionStats();
 
     bleTx.active = true;
     bleTx.msg = "OK GAME START\n";
@@ -618,6 +767,23 @@ void handleCommand(const String &raw) {
 
     bleTx.active = true;
     bleTx.msg = "OK DRAW ARROW\n";
+    return;
+  }
+
+  // PING
+  if (upper.startsWith("PING ")) {
+    String sequence = line.substring(5);
+    sequence.trim();
+
+    bleTx.active = true;
+    bleTx.msg = String("PONG ") + sequence + "\n";
+    return;
+  }
+
+  // RESTART PING
+  if (upper == "RESTART PING") {
+    bleTx.active = true;
+    bleTx.msg = "OK RESTART PING\n";
     return;
   }
 
@@ -842,10 +1008,10 @@ if (worldVectorToSnakeDir(snakeBody[0].face, commandWorldDir, newDir)) {
 }
 }
 
-void snakeDieAndReset() {
+void snakeDieAndReset(const char *deathType) {
+  sendSnakeSessionEnd(deathType);
   audio_playEvent(AUDIO_SNAKE_GAME_OVER);
   delay(350);
-  resetSnakeGame();
 }
 
 void moveSnakeHeadOneStep() {
@@ -890,7 +1056,7 @@ void moveSnakeHeadOneStep() {
     FaceId newFace = faceFromNormalVector(movementWorldDir);
 if (newFace == FACE_UNKNOWN) {
 audio_playEvent(AUDIO_SNAKE_GAME_OVER);
-snakeDieAndReset();
+snakeDieAndReset("deadZoneCollision");
 return;
 }
 
@@ -927,7 +1093,7 @@ return;
   snakeLength = newLength;
 
 if (SnakeHeadHitsBody()) {
-snakeDieAndReset();
+snakeDieAndReset("selfCollision");
 return;
 }}
 
@@ -1008,6 +1174,12 @@ void checkSnakeAppleCollision() {
       snakeBody[0].y == snakeApples[i].y
     ) {
 snakeScore++;
+uint32_t now = millis();
+if (snakeApplesCollected > 0) {
+  snakeAppleIntervalSumMs += now - snakeLastAppleMs;
+}
+snakeApplesCollected++;
+snakeLastAppleMs = now;
 growSnakeNextMove();
 
 audio_playEvent(AUDIO_SNAKE_APPLE);
@@ -1160,8 +1332,6 @@ void setup() {
   clearAllFaces();
 
   lastRestart = millis();
-
-resetSnakeGame();
 }
 
 // Called from BLE RX when frontend says "ROUND START"
@@ -1184,7 +1354,13 @@ void loop() {
 
       if (!snakeGameOver) {
         moveSnakeHeadOneStep();
-        checkSnakeAppleCollision();    
+        if (gameMode == MODE_SNAKE) {
+          checkSnakeAppleCollision();
+        }
+      }
+
+      if (gameMode != MODE_SNAKE) {
+        return;
       }
 
       renderSnakeTest();
@@ -1248,6 +1424,8 @@ void loop() {
 
         pendingDisplay.action = DISP_CLEAR_ALL;
 
+        recordSimonRoundEnd(false, "PAUSE_MOVE");
+
         bleTx.active = true;
         bleTx.msg =
           String("END ROUND result=FAIL face=")
@@ -1264,6 +1442,8 @@ void loop() {
         currentTargetFace = FACE_UNKNOWN;
 
         pendingDisplay.action = DISP_CLEAR_ALL;
+
+        recordSimonRoundEnd(true, "");
 
         bleTx.active = true;
         bleTx.msg =
@@ -1285,6 +1465,8 @@ void loop() {
 
         pendingDisplay.action = DISP_CLEAR_ALL;
 
+        recordSimonRoundEnd(false, "NO_LOCK");
+
         bleTx.active = true;
         bleTx.msg =
           String("END ROUND result=FAIL face=")
@@ -1299,6 +1481,7 @@ void loop() {
 
         roundLockedFace = startFace;
         roundBalancing = false;
+        simonRoundReactionStartMs = now;
 
         bleTx.active = true;
         bleTx.msg =
@@ -1321,6 +1504,8 @@ void loop() {
         currentTargetFace = FACE_UNKNOWN;
 
         pendingDisplay.action = DISP_CLEAR_ALL;
+
+        recordSimonRoundEnd(false, "TIMEOUT");
 
         bleTx.active = true;
         bleTx.msg =
@@ -1350,6 +1535,8 @@ void loop() {
 
           pendingDisplay.action = DISP_CLEAR_ALL;
 
+          recordSimonRoundEnd(false, "WRONG_FACE");
+
           bleTx.active = true;
           bleTx.msg =
             String("END ROUND result=FAIL face=")
@@ -1358,10 +1545,14 @@ void loop() {
         } else if (currentTargetFace != FACE_UNKNOWN && imu.upFace == currentTargetFace && (now - upFaceSince) >= HOLD_TIME_MS && !pauseActive) {
           pendingCountdown.action = CD_STOP;
 
+          recordSimonReaction(now);
+
           inRound = false;
           currentTargetFace = FACE_UNKNOWN;
 
           pendingDisplay.action = DISP_CLEAR_ALL;
+
+          recordSimonRoundEnd(true, "");
 
           bleTx.active = true;
           bleTx.msg =

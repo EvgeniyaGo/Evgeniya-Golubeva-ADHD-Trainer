@@ -23,6 +23,7 @@ export type SessionRawData = Record<string, unknown>;
 
 export type BaseSessionData = {
   durationSec: number;
+  createdAt?: Date;
   rawData?: SessionRawData;
 };
 

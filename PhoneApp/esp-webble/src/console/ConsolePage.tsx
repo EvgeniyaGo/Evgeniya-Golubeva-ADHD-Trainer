@@ -11,13 +11,14 @@ import {
   MIN_ROUND_MS,
 } from "./protocol/constants";
 import { arrowFromTo } from "./protocol/faces";
-import { parseEndRound } from "./protocol/parsing";
+import { parseEndRound, parseSessionEnd } from "./protocol/parsing";
 import { roundStartLine } from "./protocol/rounds";
 import {
   RoundPhase,
   type EndRoundFailData,
   type FaceId,
   type PendingRound,
+  type SessionResult,
   type ShapeId,
 } from "./protocol/types";
 
@@ -40,10 +41,13 @@ export default function ConsolePage() {
 
   // Round/game state
   const [, setRoundPhase] = useState<RoundPhase>(RoundPhase.IDLE);
+  const [, setLatestSessionResult] = useState<SessionResult | null>(null);
 
   // Runtime refs
   const logBoxRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<Map<number, number>>(new Map()); // seq -> send timestamp
+  const packetTestIntervalRef = useRef<number | null>(null);
+  const nextSeqRef = useRef(1);
   const remainingRoundsRef = useRef<number>(0);
   const pendingRoundRef = useRef<PendingRound | null>(null);
   const roundPhaseRef = useRef<RoundPhase>(RoundPhase.IDLE);
@@ -52,6 +56,7 @@ export default function ConsolePage() {
   const successStreakRef = useRef<number>(0);
   const failStreakRef = useRef<number>(0);
   const requestedGameRef = useRef<"goNoGo" | "snake" | null>(null);
+  const latestSessionResultRef = useRef<SessionResult | null>(null);
 
   // BLE helpers
   const pushLog = useCallback((line: string) => {
@@ -735,6 +740,7 @@ export default function ConsolePage() {
     if (!gatt?.tx) return;
 
     const tx = gatt.tx;
+    let active = true;
 
     const handleNotification = async (ev: Event) => {
       const dv = (ev.target as BluetoothRemoteGATTCharacteristic).value!;
@@ -746,6 +752,30 @@ export default function ConsolePage() {
 
         for (const line of text.split(/\r?\n/)) {
           if (!line) continue;
+
+          if (line.startsWith("SESSION END")) {
+            const sessionResult = parseSessionEnd(line);
+
+            if (!sessionResult) {
+              pushLog(`[SESSION] Could not parse SESSION END: ${line}`);
+              continue;
+            }
+
+            latestSessionResultRef.current = sessionResult;
+            setLatestSessionResult(sessionResult);
+
+            if (sessionResult.type === "SIMON") {
+              pushLog(
+                `[SESSION] SIMON result captured rounds=${sessionResult.rounds} accuracy=${sessionResult.accuracyPct}% durationMs=${sessionResult.durationMs}`
+              );
+            } else {
+              pushLog(
+                `[SESSION] SNAKE result captured score=${sessionResult.finalScore} apples=${sessionResult.apples} deathType=${sessionResult.deathType}`
+              );
+            }
+
+            continue;
+          }
 
           if (line.startsWith("ROUND BALANCE")) {
             const round = pendingRoundRef.current;
@@ -890,14 +920,16 @@ export default function ConsolePage() {
     };
 
     void tx.startNotifications().then(() => {
-      tx.addEventListener("characteristicvaluechanged", handleNotification);
+      if (active) {
+        tx.addEventListener("characteristicvaluechanged", handleNotification);
+      }
     });
 
     pushLog(`[BLE] Connected to ${deviceName || "(no name)"}`);
 
     return () => {
+      active = false;
       tx.removeEventListener("characteristicvaluechanged", handleNotification);
-      void tx.stopNotifications().catch(() => undefined);
     };
   }, [
     deviceName,
@@ -910,31 +942,42 @@ export default function ConsolePage() {
 
   // Packet test effects
   useEffect(() => {
-    if (!testRunning || status !== "connected") return;
+    if (packetTestIntervalRef.current != null) {
+      window.clearInterval(packetTestIntervalRef.current);
+      packetTestIntervalRef.current = null;
+    }
+
+    if (!testRunning || status !== "connected") {
+      return undefined;
+    }
 
     const intervalMs = 100; // a bit less aggressive; can tune later
-    const id = window.setInterval(() => {
+    packetTestIntervalRef.current = window.setInterval(() => {
       // Optional safety: don't overload if many are in-flight
       if (pendingRef.current.size > 10) {
         return;
       }
 
-      setNextSeq((prevSeq) => {
-        const seq = prevSeq;
-        const line = `PING ${seq}\n`;
+      const seq = nextSeqRef.current;
+      nextSeqRef.current = seq + 1;
+      setNextSeq(nextSeqRef.current);
 
-        (async () => {
-          await writeLine(line);
+      const line = `PING ${seq}\n`;
 
-          pendingRef.current.set(seq, performance.now());
-          setSentCount((c) => c + 1);
-        })();
+      (async () => {
+        await writeLine(line);
 
-        return seq + 1;
-      });
+        pendingRef.current.set(seq, performance.now());
+        setSentCount((c) => c + 1);
+      })();
     }, intervalMs);
 
-    return () => window.clearInterval(id);
+    return () => {
+      if (packetTestIntervalRef.current != null) {
+        window.clearInterval(packetTestIntervalRef.current);
+        packetTestIntervalRef.current = null;
+      }
+    };
   }, [testRunning, status, writeLine]);
 
   // Derived UI values
@@ -955,6 +998,7 @@ export default function ConsolePage() {
     setRecvCount(0);
     setAvgRttMs(null);
     pendingRef.current.clear();
+    nextSeqRef.current = 1;
     setNextSeq(1);
     // ask ESP to reset its counters
     if (isConnected) {
@@ -964,12 +1008,21 @@ export default function ConsolePage() {
 
   const togglePacketTest = useCallback(() => {
     if (!testRunning) {
+      if (packetTestIntervalRef.current != null) {
+        window.clearInterval(packetTestIntervalRef.current);
+        packetTestIntervalRef.current = null;
+      }
+
       // reset stats on start
       setSentCount(0);
       setRecvCount(0);
       setAvgRttMs(null);
       pendingRef.current.clear();
+      nextSeqRef.current = 1;
       setNextSeq(1);
+    } else if (packetTestIntervalRef.current != null) {
+      window.clearInterval(packetTestIntervalRef.current);
+      packetTestIntervalRef.current = null;
     }
     setTestRunning((r) => !r);
   }, [testRunning]);

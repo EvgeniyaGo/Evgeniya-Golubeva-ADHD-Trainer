@@ -54,3 +54,28 @@ export type EndRoundFailData = {
   time?: number;
   reason?: string;
 };
+
+export type SimonSessionResult = {
+  type: "SIMON";
+  durationMs: number;
+  difficulty: string | number;
+  omissionErrors: number;
+  commissionErrors: number;
+  meanReactionMs: number;
+  reactionStdMs: number;
+  accuracyPct: number;
+  longestFocusStreak: number;
+  rounds: number;
+};
+
+export type SnakeSessionResult = {
+  type: "SNAKE";
+  durationMs: number;
+  speedMs: number;
+  finalScore: number;
+  apples: number;
+  avgAppleMs: number;
+  deathType: string;
+};
+
+export type SessionResult = SimonSessionResult | SnakeSessionResult;

@@ -1,5 +1,8 @@
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useBle } from "../ble/useBle";
 import { AppFrame } from "../components/layout/AppFrame";
+import { useGameSession } from "../gameSession/useGameSession";
 
 const rules = [
   "Guide the snake across cube faces",
@@ -17,6 +20,40 @@ const metrics = [
 ];
 
 export default function SnakePage() {
+  const navigate = useNavigate();
+  const { isConnected } = useBle();
+  const {
+    activeGame,
+    latestSessionResult,
+    lastCompletedGame,
+    sessionError,
+    startSnakeSession,
+  } = useGameSession();
+  const [waitingForResult, setWaitingForResult] = useState(false);
+
+  useEffect(() => {
+    if (
+      waitingForResult &&
+      lastCompletedGame === "snake" &&
+      latestSessionResult?.type === "SNAKE"
+    ) {
+      navigate("/games/snake/results");
+    }
+  }, [lastCompletedGame, latestSessionResult, navigate, waitingForResult]);
+
+  useEffect(() => {
+    if (sessionError) {
+      setWaitingForResult(false);
+    }
+  }, [sessionError]);
+
+  const handleStart = async () => {
+    setWaitingForResult(true);
+    await startSnakeSession();
+  };
+
+  const isRunning = activeGame === "snake";
+
   return (
     <AppFrame ariaLabel="3D Snake setup" activePage="home">
       <div className="game-setup-page">
@@ -31,10 +68,19 @@ export default function SnakePage() {
               movement.
             </p>
           </div>
-          <Link className="game-start-button result-link" to="/games/snake/results">
-            Start session
-          </Link>
+          <button
+            className="game-start-button result-link"
+            disabled={!isConnected || isRunning}
+            type="button"
+            onClick={() => void handleStart()}
+          >
+            {isRunning ? "Waiting for results" : "Start session"}
+          </button>
         </section>
+        {!isConnected && (
+          <p className="copy-message">Connect to the cube before starting.</p>
+        )}
+        {sessionError && <p className="copy-message">{sessionError}</p>}
 
         <div className="game-setup-grid">
           <section className="account-card" aria-label="Rules">

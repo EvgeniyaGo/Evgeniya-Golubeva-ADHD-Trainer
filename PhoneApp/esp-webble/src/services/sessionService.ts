@@ -8,6 +8,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import type { SessionResult } from "../console/protocol/types";
 import type {
   CreateSessionData,
   GameType,
@@ -38,12 +39,61 @@ export async function createSession(
   userId: string,
   sessionData: CreateSessionData
 ) {
+  const { createdAt, ...storedSessionData } = sessionData;
   const docRef = await addDoc(userSessionsCollection(userId), {
-    ...sessionData,
-    createdAt: serverTimestamp(),
+    ...storedSessionData,
+    createdAt: createdAt ?? serverTimestamp(),
   });
 
   return docRef.id;
+}
+
+export function createSessionDataFromResult(
+  result: SessionResult,
+  receivedAt: Date
+): CreateSessionData {
+  if (result.type === "SIMON") {
+    return {
+      gameType: "goNoGo",
+      createdAt: receivedAt,
+      durationSec: Math.round(result.durationMs / 1000),
+      metrics: {
+        omissionErrors: result.omissionErrors,
+        commissionErrors: result.commissionErrors,
+        meanReactionTimeMs: result.meanReactionMs,
+        reactionTimeVariabilityMs: result.reactionStdMs,
+        accuracyPercent: result.accuracyPct,
+        longestFocusStreak: result.longestFocusStreak,
+      },
+      rawData: {
+        source: "ble",
+        receivedAt: receivedAt.toISOString(),
+        difficulty: result.difficulty,
+        rounds: result.rounds,
+        firmwareResult: result,
+      },
+    };
+  }
+
+  return {
+    gameType: "snake",
+    createdAt: receivedAt,
+    durationSec: Math.round(result.durationMs / 1000),
+    metrics: {
+      survivalTimeSec: Math.round(result.durationMs / 1000),
+      finalScore: result.finalScore,
+      applesCollected: result.apples,
+      averageTimeBetweenApplesSec:
+        result.avgAppleMs === 0 ? null : Number((result.avgAppleMs / 1000).toFixed(1)),
+      deathType: result.deathType,
+    },
+    rawData: {
+      source: "ble",
+      receivedAt: receivedAt.toISOString(),
+      speedMs: result.speedMs,
+      firmwareResult: result,
+    },
+  };
 }
 
 export async function getUserSessions(userId: string) {

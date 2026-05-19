@@ -2,49 +2,120 @@ import { Link } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { AppFrame } from "../components/layout/AppFrame";
-import { createMockSession } from "../services/sessionService";
+import { useGameSession } from "../gameSession/useGameSession";
+import {
+  createMockSession,
+  createSession,
+  createSessionDataFromResult,
+} from "../services/sessionService";
+import type { SimonSessionResult } from "../console/protocol/types";
 
-const metrics = [
-  { label: "Omission Errors", value: "4", detail: "Missed target responses." },
-  {
-    label: "Commission Errors",
-    value: "2",
-    detail: "Responses made to distractor signals.",
-  },
-  {
-    label: "Mean Reaction Time",
-    value: "620 ms",
-    detail: "Average response speed on correct target responses.",
-  },
-  {
-    label: "Reaction Time Variability",
-    value: "118 ms",
-    detail: "Variation in response timing across the session.",
-  },
-  {
-    label: "Accuracy",
-    value: "88%",
-    detail: "Correct responses compared with total prompts.",
-  },
-  {
-    label: "Longest Focus Streak",
-    value: "16",
-    detail: "Longest run of correct responses without interruption.",
-  },
-];
+const mockResult: SimonSessionResult = {
+  type: "SIMON",
+  durationMs: 180000,
+  difficulty: "Normal",
+  omissionErrors: 4,
+  commissionErrors: 2,
+  meanReactionMs: 620,
+  reactionStdMs: 118,
+  accuracyPct: 88,
+  longestFocusStreak: 16,
+  rounds: 22,
+};
+
+function formatDuration(ms: number) {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) return `${seconds} sec`;
+  if (seconds === 0) return `${minutes} min`;
+  return `${minutes} min ${seconds} sec`;
+}
+
+function formatDateTime(date: Date | null) {
+  if (!date) return "Mock fallback";
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function buildMetrics(result: SimonSessionResult) {
+  return [
+    {
+      label: "Omission Errors",
+      value: String(result.omissionErrors),
+      detail: "Missed target responses.",
+    },
+    {
+      label: "Commission Errors",
+      value: String(result.commissionErrors),
+      detail: "Responses made to distractor signals.",
+    },
+    {
+      label: "Mean Reaction Time",
+      value: `${result.meanReactionMs} ms`,
+      detail: "Average response speed on correct target responses.",
+    },
+    {
+      label: "Reaction Time Variability",
+      value: `${result.reactionStdMs} ms`,
+      detail: "Variation in response timing across the session.",
+    },
+    {
+      label: "Accuracy",
+      value: `${result.accuracyPct}%`,
+      detail: "Correct responses compared with total prompts.",
+    },
+    {
+      label: "Longest Focus Streak",
+      value: String(result.longestFocusStreak),
+      detail: "Longest run of correct responses without interruption.",
+    },
+    {
+      label: "Rounds",
+      value: String(result.rounds),
+      detail: "Total rounds completed in the session.",
+    },
+  ];
+}
 
 export default function GoNoGoResultsPage() {
   const { firebaseUser } = useAuth();
+  const { latestSessionResult, latestSessionReceivedAt } = useGameSession();
   const [saveMessage, setSaveMessage] = useState("");
+  const realResult =
+    latestSessionResult?.type === "SIMON" ? latestSessionResult : null;
+  const realReceivedAt = realResult ? latestSessionReceivedAt : null;
+  const result = realResult ?? mockResult;
+  const metrics = buildMetrics(result);
 
-  const handleSaveMockSession = async () => {
+  const handleSaveSession = async () => {
     if (!firebaseUser) {
-      setSaveMessage("Log in to save a mock session.");
+      setSaveMessage("Log in to save this session.");
       return;
     }
 
-    await createMockSession(firebaseUser.uid, "goNoGo");
-    setSaveMessage("Mock Go/No-Go session saved.");
+    try {
+      if (realResult && realReceivedAt) {
+        await createSession(
+          firebaseUser.uid,
+          createSessionDataFromResult(realResult, realReceivedAt)
+        );
+        setSaveMessage("Go/No-Go session saved.");
+        return;
+      }
+
+      await createMockSession(firebaseUser.uid, "goNoGo");
+      setSaveMessage("Mock Go/No-Go session saved.");
+    } catch {
+      setSaveMessage("Could not save session. Try again.");
+    }
   };
 
   return (
@@ -58,7 +129,7 @@ export default function GoNoGoResultsPage() {
             </h1>
             <p className="game-setup-purpose">
               Review response accuracy, timing, and attention consistency from
-              this mock session.
+              this {realResult ? "cube" : "mock"} session.
             </p>
           </div>
         </section>
@@ -70,15 +141,15 @@ export default function GoNoGoResultsPage() {
           <div className="selected-session-card">
             <div>
               <span>Duration</span>
-              <strong>3 min</strong>
+              <strong>{formatDuration(result.durationMs)}</strong>
             </div>
             <div>
               <span>Difficulty</span>
-              <strong>Normal</strong>
+              <strong>{String(result.difficulty)}</strong>
             </div>
             <div>
               <span>Date/time</span>
-              <strong>Today, placeholder</strong>
+              <strong>{formatDateTime(realReceivedAt)}</strong>
             </div>
           </div>
         </section>
@@ -114,9 +185,9 @@ export default function GoNoGoResultsPage() {
           <button
             className="export-button"
             type="button"
-            onClick={() => void handleSaveMockSession()}
+            onClick={() => void handleSaveSession()}
           >
-            Save mock session
+            {realResult ? "Save session" : "Save mock session"}
           </button>
           <Link className="export-button result-link" to="/games/go-no-go">
             Back to game setup
